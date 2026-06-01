@@ -12,12 +12,15 @@ Forked from Khronos [Vulkan-Tools `vkcube`](https://github.com/KhronosGroup/Vulk
 `vulkan-1` directly (no `cube_functions.h` generation step).
 
 > **Idea & inspiration:** [**Nick (@Xnick417x)**](https://github.com/Xnick417x) — co-author. See [Credits](#credits).
+>
+> **▶ Showcase video:** https://youtu.be/gKhwjwjGvWI
 
 ## Download
 
 Grab the latest `AIO-Graphics-Test.exe` from the
 [**Releases**](https://github.com/The412Banner/AIO-Graphics-Test/releases) page, drop it
-into a Winlator container, and run it — it opens a menu, no install. The container already
+into a Winlator container, and run it — it opens a menu, no install. See it in action in the
+[**showcase video**](https://youtu.be/gKhwjwjGvWI). The container already
 provides `vulkan-1.dll` (every Winlator container does). The exe's embedded cube icon is
 used as the shortcut art when you add it to a container.
 
