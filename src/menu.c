@@ -169,8 +169,8 @@ static void show_benchmark(HWND frame) {
 
     g_placeholder = CreateWindowA(
         "STATIC",
-        "Pick an API to benchmark (15 s each), or Run All to sweep them in sequence.\n"
-        "Per-frame data is saved to AIO-Graphics-Test_bench.csv.",
+        "Benchmark one API (15 s each), or\n"
+        "tap Run All to sweep them. CSV saved.",
         WS_CHILD | WS_VISIBLE | SS_LEFT, cr.left, cr.top, cr.right - cr.left - 200, 56, frame, NULL,
         g_hinst, NULL);
     if (g_ui_font) SendMessage(g_placeholder, WM_SETFONT, (WPARAM)g_ui_font, TRUE);
@@ -293,36 +293,6 @@ static int read_dxvk_log_version(char *out, size_t n) {
     return 0;
 }
 
-// Best-effort: read the loaded d3d11.dll (DXVK) product version. Writes
-// "not found" if d3d11.dll won't load, "unknown" if it has no version stamp.
-static void get_dxvk_version(char *out, size_t n) {
-    snprintf(out, n, "unknown");
-    HMODULE h = LoadLibraryA("d3d11.dll");
-    if (!h) {
-        snprintf(out, n, "not found (no d3d11.dll)");
-        return;
-    }
-    char path[MAX_PATH];
-    if (GetModuleFileNameA(h, path, MAX_PATH)) {
-        DWORD dummy = 0, sz = GetFileVersionInfoSizeA(path, &dummy);
-        if (sz) {
-            void *buf = malloc(sz);
-            if (buf && GetFileVersionInfoA(path, 0, sz, buf)) {
-                VS_FIXEDFILEINFO *ffi = NULL;
-                UINT fl = 0;
-                if (VerQueryValueA(buf, "\\", (void **)&ffi, &fl) && ffi &&
-                    (ffi->dwProductVersionMS || ffi->dwProductVersionLS)) {
-                    snprintf(out, n, "%u.%u.%u", (unsigned)HIWORD(ffi->dwProductVersionMS),
-                             (unsigned)LOWORD(ffi->dwProductVersionMS),
-                             (unsigned)HIWORD(ffi->dwProductVersionLS));
-                }
-            }
-            free(buf);
-        }
-    }
-    FreeLibrary(h);
-}
-
 // Semaphore probe: benchmark the same heavy DXVK workload (instanced D3D11) with
 // timeline vs binary semaphores, to measure the Turnip-kgsl timeline-semaphore
 // regression. Reuses the benchmark buttons (poll + show result).
@@ -340,13 +310,8 @@ static void show_semaphore_probe(HWND frame) {
     char verline[160], dxvkver[96];
     if (read_dxvk_log_version(dxvkver, sizeof(dxvkver)))
         snprintf(verline, sizeof(verline), "DXVK version: %s", dxvkver);
-    else {
-        get_dxvk_version(dxvkver, sizeof(dxvkver));
-        snprintf(verline, sizeof(verline),
-                 "DXVK version: (run a benchmark to detect; d3d11.dll reports %s - a spoofed "
-                 "Windows version)",
-                 dxvkver);
-    }
+    else
+        snprintf(verline, sizeof(verline), "DXVK version: run a benchmark to detect");
     g_probe_ver = CreateWindowA("STATIC", verline, WS_CHILD | WS_VISIBLE | SS_LEFT, cr.left, cr.top,
                                 cr.right - cr.left, 22, frame, NULL, g_hinst, NULL);
     if (g_ui_font_bold) SendMessage(g_probe_ver, WM_SETFONT, (WPARAM)g_ui_font_bold, TRUE);
@@ -676,7 +641,7 @@ int aio_run_shell(HINSTANCE hInstance) {
     wc.lpszClassName = cls;
     RegisterClassA(&wc);
 
-    int w = 680, h = 480;
+    int w = 840, h = 540;
     int sx = (GetSystemMetrics(SM_CXSCREEN) - w) / 2;
     int sy = (GetSystemMetrics(SM_CYSCREEN) - h) / 2;
     if (sx < 0) sx = 0;
