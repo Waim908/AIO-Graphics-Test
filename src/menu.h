@@ -13,7 +13,8 @@ enum AioMode {
     AIO_MODE_CUBE_DX11,
     AIO_MODE_CUBE_DX12,
     AIO_MODE_GPUINFO,
-    AIO_MODE_BENCH
+    AIO_MODE_BENCH,
+    AIO_MODE_SEMAPHORE
 };
 
 // Runs the app shell: a persistent left sidebar (the menu, always visible) plus

@@ -31,7 +31,8 @@ static SbItem g_items[] = {
     {"Cube  -  Vulkan", AIO_MODE_CUBE_VK},     {"Cube  -  OpenGL", AIO_MODE_CUBE_GL},
     {"Cube  -  Direct3D 9", AIO_MODE_CUBE_DX9}, {"Cube  -  Direct3D 11", AIO_MODE_CUBE_DX11},
     {"Cube  -  Direct3D 12", AIO_MODE_CUBE_DX12}, {"GPU Info", AIO_MODE_GPUINFO},
-    {"Benchmark", AIO_MODE_BENCH},             {"Exit", AIO_MODE_EXIT},
+    {"Benchmark", AIO_MODE_BENCH},             {"Semaphore Probe", AIO_MODE_SEMAPHORE},
+    {"Exit", AIO_MODE_EXIT},
 };
 #define NITEMS ((int)(sizeof(g_items) / sizeof(g_items[0])))
 
@@ -245,6 +246,51 @@ static void show_dx11_scenes(HWND frame) {
     }
 }
 
+// Semaphore probe: benchmark the same heavy DXVK workload (instanced D3D11) with
+// timeline vs binary semaphores, to measure the Turnip-kgsl timeline-semaphore
+// regression. Reuses the benchmark buttons (poll + show result).
+static void show_semaphore_probe(HWND frame) {
+    destroy_content();
+    g_cb_bench = 1;
+    SetWindowTextA(g_header, "Semaphore Probe (DXVK / Turnip)");
+    RECT cr;
+    get_content_rect(frame, &cr);
+
+    g_placeholder = CreateWindowA(
+        "STATIC",
+        "Benchmarks the instanced D3D11 cube (heavy DXVK load) twice: with timeline\n"
+        "vs binary semaphores. On Turnip-kgsl, the timeline path can serialize the\n"
+        "finish thread and roughly halve FPS. Compare the two below (needs a DXVK\n"
+        "build that honors DXVK_DISABLE_TIMELINE_SEMAPHORES).",
+        WS_CHILD | WS_VISIBLE | SS_LEFT, cr.left, cr.top, cr.right - cr.left, 84, frame, NULL,
+        g_hinst, NULL);
+    if (g_ui_font) SendMessage(g_placeholder, WM_SETFONT, (WPARAM)g_ui_font, TRUE);
+
+    static const char *labels[] = {"Timeline semaphores (15s)", "Binary semaphores (15s)"};
+    static const char *args[] = {"dx11 --scene instanced --bench 15 --semaphore timeline",
+                                 "dx11 --scene instanced --bench 15 --semaphore binary"};
+    static const char *apilabels[] = {"DXVK Timeline", "DXVK Binary"};
+    g_cbtn_n = 2;
+    int y = cr.top + 96;
+    for (int i = 0; i < g_cbtn_n; i++) {
+        g_cbtn_arg[i] = args[i];
+        g_cbtn_label[i] = apilabels[i];
+        g_cbtn_proc[i] = NULL;
+        g_cbtn[i] = CreateWindowA("BUTTON", labels[i], WS_CHILD | WS_VISIBLE | BS_PUSHBUTTON,
+                                  cr.left, y, 220, 32, frame, (HMENU)(INT_PTR)(ID_CB_FIRST + i),
+                                  g_hinst, NULL);
+        if (g_ui_font) SendMessage(g_cbtn[i], WM_SETFONT, (WPARAM)g_ui_font, TRUE);
+        g_cbtn_avg[i] = CreateWindowA("STATIC", "", WS_CHILD | WS_VISIBLE | SS_LEFT, cr.left + 232,
+                                      y + 6, 86, 24, frame, NULL, g_hinst, NULL);
+        if (g_ui_font_bold) SendMessage(g_cbtn_avg[i], WM_SETFONT, (WPARAM)g_ui_font_bold, TRUE);
+        g_cbtn_result[i] =
+            CreateWindowA("STATIC", "", WS_CHILD | WS_VISIBLE | SS_LEFT, cr.left + 320, y + 6,
+                          (cr.right - (cr.left + 320)), 24, frame, NULL, g_hinst, NULL);
+        if (g_ui_font) SendMessage(g_cbtn_result[i], WM_SETFONT, (WPARAM)g_ui_font, TRUE);
+        y += 40;
+    }
+}
+
 static void layout_content(HWND frame) {
     RECT cr;
     get_content_rect(frame, &cr);
@@ -326,6 +372,9 @@ static void on_select(HWND frame, int action) {
         }
         case AIO_MODE_BENCH:
             show_benchmark(frame);
+            break;
+        case AIO_MODE_SEMAPHORE:
+            show_semaphore_probe(frame);
             break;
         default:
             break;

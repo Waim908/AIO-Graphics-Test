@@ -7,6 +7,10 @@
 // Start a benchmark of the given duration (seconds). Allocates the sample store.
 void aio_bench_begin(int seconds);
 
+// Override the label used for the result file + summary (e.g. semaphore-probe
+// modes). Pass NULL/"" to clear. Call before the run.
+void aio_bench_set_label(const char *label);
+
 // Whether a benchmark is currently active.
 int aio_bench_active(void);
 

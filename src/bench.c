@@ -20,6 +20,14 @@ static size_t g_cap;   // capacity
 static int g_seconds;  // requested duration
 static int g_active;
 static int g_warmup;   // first frames to discard (pipeline/swapchain warm-up)
+static char g_label_override[64];  // if set, overrides the result label (probe modes)
+
+void aio_bench_set_label(const char *label) {
+    if (label && label[0])
+        snprintf(g_label_override, sizeof(g_label_override), "%s", label);
+    else
+        g_label_override[0] = '\0';
+}
 
 // Frames faster than this (ms) are measurement artifacts, not real rendered
 // frames (a windowed Present alone costs more than this), so they're dropped to
@@ -63,6 +71,7 @@ static int cmp_double(const void *a, const void *b) {
 
 char *aio_bench_finish(const char *api_label, double total_seconds) {
     if (!api_label) api_label = "";
+    if (g_label_override[0]) api_label = g_label_override;  // probe modes override the label
 
     if (!g_ft || g_n == 0) {
         g_active = 0;

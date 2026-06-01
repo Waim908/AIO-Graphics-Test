@@ -4273,6 +4273,15 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR pCmdLine,
                 int sec = atoi(argv[iii + 1]);
                 if (sec > 0) aio_bench_begin(sec);
             }
+        // Optional --semaphore timeline|binary: probe the DXVK Turnip-kgsl
+        // timeline-semaphore regression. Must set the env var BEFORE the DXVK
+        // d3d11.dll loads (inside the backend below), so do it here in WinMain.
+        for (int iii = 0; iii < argc - 1; iii++)
+            if (argv && argv[iii] && strcmp(argv[iii], "--semaphore") == 0) {
+                int binary = strcmp(argv[iii + 1], "binary") == 0;
+                SetEnvironmentVariableA("DXVK_DISABLE_TIMELINE_SEMAPHORES", binary ? "1" : "0");
+                aio_bench_set_label(binary ? "DXVK Binary" : "DXVK Timeline");
+            }
         if (strcmp(api, "gl") == 0) {
             int rc = aio_run_gl_cube(hInstance);
             AIO_FREE_ARGV();
