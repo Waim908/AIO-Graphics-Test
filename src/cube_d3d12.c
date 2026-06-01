@@ -165,10 +165,12 @@ static void fail_box(const char *msg) {
 }
 
 // mingw-w64 gates the COBJMACRO for GetCPUDescriptorHandleForHeapStart behind
-// WIDL_C_INLINE_WRAPPERS (which mis-compiles on this toolchain), so call the
-// vtable directly - it's the value-return form on x86_64.
+// WIDL_C_INLINE_WRAPPERS (which mis-compiles on this toolchain). Its vtable uses
+// the explicit-aggregate-return form (This, out*), so call that directly.
 static D3D12_CPU_DESCRIPTOR_HANDLE cpu_heap_start(ID3D12DescriptorHeap *h) {
-    return h->lpVtbl->GetCPUDescriptorHandleForHeapStart(h);
+    D3D12_CPU_DESCRIPTOR_HANDLE out;
+    h->lpVtbl->GetCPUDescriptorHandleForHeapStart(h, &out);
+    return out;
 }
 
 static D3D12_HEAP_PROPERTIES heap_props(D3D12_HEAP_TYPE type) {
