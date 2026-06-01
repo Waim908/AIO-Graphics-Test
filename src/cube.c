@@ -2635,12 +2635,12 @@ static void demo_create_window(struct demo *demo) {
     win_class.cbClsExtra = 0;
     win_class.cbWndExtra = 0;
     win_class.hInstance = demo->connection;  // hInstance
-    win_class.hIcon = LoadIcon(NULL, IDI_APPLICATION);
+    win_class.hIcon = LoadIconA(demo->connection, MAKEINTRESOURCEA(1));
     win_class.hCursor = LoadCursor(NULL, IDC_ARROW);
     win_class.hbrBackground = (HBRUSH)GetStockObject(WHITE_BRUSH);
     win_class.lpszMenuName = NULL;
     win_class.lpszClassName = demo->name;
-    win_class.hIconSm = LoadIcon(NULL, IDI_WINLOGO);
+    win_class.hIconSm = LoadIconA(demo->connection, MAKEINTRESOURCEA(1));
     // Register window class:
     if (!RegisterClassEx(&win_class)) {
         // It didn't work, so try to give a useful error:

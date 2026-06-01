@@ -49,9 +49,12 @@ jobs:
           glslangValidator -V -x -o src/cube.vert.inc src/cube.vert
           glslangValidator -V -x -o src/cube.frag.inc src/cube.frag
 
+      - name: Compile resources (app icon)
+        run: x86_64-w64-mingw32-windres -I src src/app.rc -o app_res.o
+
       - name: Cross-compile AIO-Graphics-Test.exe
         run: |
-          x86_64-w64-mingw32-gcc src/cube.c src/gpuinfo.c src/menu.c src/bench.c src/hud.c src/cube_gl.c src/cube_d3d11.c src/cube_d3d12.c src/cube_d3d9.c src/cube_d3d8.c src/watchdog.c \
+          x86_64-w64-mingw32-gcc src/cube.c src/gpuinfo.c src/menu.c src/bench.c src/hud.c src/cube_gl.c src/cube_d3d11.c src/cube_d3d12.c src/cube_d3d9.c src/cube_d3d8.c src/watchdog.c app_res.o \
             -I src -I vk/include \
             -DVK_USE_PLATFORM_WIN32_KHR -DWIN32_LEAN_AND_MEAN \
             -O2 -mwindows \

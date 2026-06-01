@@ -1259,6 +1259,7 @@ int aio_run_d3d11_cube(HINSTANCE hinst, const char *scene_name) {
     wc.lpfnWndProc = d3d11_wndproc;
     wc.hInstance = hinst;
     wc.hCursor = LoadCursor(NULL, IDC_ARROW);
+    wc.hIcon = LoadIconA(hinst, MAKEINTRESOURCEA(1));
     wc.lpszClassName = cls;
     RegisterClassA(&wc);
 

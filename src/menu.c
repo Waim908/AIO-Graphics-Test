@@ -638,6 +638,7 @@ int aio_run_shell(HINSTANCE hInstance) {
     memset(&wc, 0, sizeof(wc));
     wc.lpfnWndProc = shell_wndproc;
     wc.hInstance = hInstance;
+    wc.hIcon = LoadIconA(hInstance, MAKEINTRESOURCEA(1));
     wc.hCursor = LoadCursor(NULL, IDC_ARROW);
     wc.hbrBackground = (HBRUSH)(COLOR_BTNFACE + 1);
     wc.lpszClassName = cls;

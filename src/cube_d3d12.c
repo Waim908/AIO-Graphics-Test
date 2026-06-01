@@ -210,6 +210,7 @@ int aio_run_d3d12_cube(HINSTANCE hinst) {
     wc.lpfnWndProc = d3d12_wndproc;
     wc.hInstance = hinst;
     wc.hCursor = LoadCursor(NULL, IDC_ARROW);
+    wc.hIcon = LoadIconA(hinst, MAKEINTRESOURCEA(1));
     wc.lpszClassName = cls;
     RegisterClassA(&wc);
     HWND hwnd = CreateWindowA(cls, "AIO Graphics Test  -  Direct3D 12",

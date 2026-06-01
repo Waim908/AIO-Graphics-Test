@@ -107,6 +107,7 @@ int aio_run_gl_cube(HINSTANCE hinst) {
     wc.lpfnWndProc = gl_wndproc;
     wc.hInstance = hinst;
     wc.hCursor = LoadCursor(NULL, IDC_ARROW);
+    wc.hIcon = LoadIconA(hinst, MAKEINTRESOURCEA(1));
     wc.lpszClassName = cls;
     RegisterClassA(&wc);
 

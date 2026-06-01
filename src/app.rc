@@ -1,0 +1,4 @@
+// AIO Graphics Test - Win32 resources.
+// Icon id 1 = the app icon (lowest id, so Explorer / Winlator use it as the
+// file icon and extract it for shortcut art).
+1 ICON "app.ico"
