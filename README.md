@@ -2,12 +2,39 @@
 
 An all-in-one graphics diagnostic + benchmark cube for testing the **star / Winlator**
 Wine graphics stack on Android (DXVK, VKD3D, Turnip, Zink). One Windows `.exe` you drop
-into a container — it replaces both `vkcube.exe` and `GPUInfo.exe`.
+into a container — it replaces `vkcube.exe`, `GPUInfo.exe`, and the whole `3d-tests` kit
+(DX9/11/12 + GL demos).
 
 Forked from Khronos [Vulkan-Tools `vkcube`](https://github.com/KhronosGroup/Vulkan-Tools)
 (`cube.c`, tag `sdk-1.3.239.0`, Apache-2.0 — see header in `src/cube.c`). The
 self-contained pre-codegen base links `vulkan-1` directly (no `cube_functions.h`
 generation step).
+
+> **Full project breakdown:** see [`docs/OVERVIEW.md`](docs/OVERVIEW.md).
+
+## What it will be — at a glance
+
+A single Windows binary that is a **diagnostic + benchmark + multi-API renderer**:
+
+- **Smoke test** — renders the cube (default), like vkcube.
+- **GPU/driver report** — `--gpuinfo` dumps full OpenGL + Vulkan info to console + file.
+- **Benchmark (opt-in)** — `--bench <sec>` → avg / min / max / 1%-low FPS + CSV.
+- **Multi-API** — `--api gl|vk|dx9|dx11|dx12` renders the same cube through every graphics
+  API, so one run pinpoints *which translation layer* is broken or slow:
+
+  | `--api` | Path it exercises |
+  |---|---|
+  | `vk`   | native Vulkan → **Turnip** (no translation) |
+  | `gl`   | OpenGL → **Zink / wined3d** |
+  | `dx9`  | **DXVK** d3d9 → Vulkan |
+  | `dx11` | **DXVK** d3d11 → Vulkan |
+  | `dx12` | **VKD3D-Proton** → Vulkan |
+
+  *(`dx8` optional, last.)*
+- **Regression probe** — `--semaphore timeline|binary` reproduces/measures the DXVK
+  Turnip-kgsl half-FPS regression.
+
+All output is also written to disk, so results survive a PRoot/Termux OOM-kill mid-test.
 
 ## Modes
 
