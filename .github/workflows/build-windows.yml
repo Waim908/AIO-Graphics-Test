@@ -38,7 +38,8 @@ jobs:
             -DVULKAN_HEADERS_INSTALL_DIR=$PWD/vk \
             -DCMAKE_INSTALL_PREFIX=$PWD/vk \
             -DCMAKE_BUILD_TYPE=Release \
-            -DUSE_MASM=OFF -DUSE_GAS=OFF
+            -DUSE_MASM=OFF -DUSE_GAS=OFF \
+            -DBUILD_WERROR=OFF -DBUILD_TESTS=OFF
           cmake --build vl/build
           cmake --install vl/build
           echo "--- import lib(s): ---"

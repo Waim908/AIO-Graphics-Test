@@ -78,7 +78,9 @@ src/*.h               linmath, gettime, object_type_string_helper, lunarg.ppm (t
 cmake/                mingw-w64 cross toolchain file
 ```
 
-## License
+## License & credits
 
-Apache-2.0 (inherited from Vulkan-Tools). The third-party `GPUInfo.exe` is **not**
-bundled or copied — its GL+VK reporting is reimplemented natively here.
+Apache-2.0 (inherited from Vulkan-Tools) — see [`LICENSE`](LICENSE). No third-party
+`.exe` binaries are bundled or copied; tools like `GPUInfo.exe` are reimplemented
+natively. Full attribution for the vkcube base and the `3d-tests` reference kit is in
+[`CREDITS.md`](CREDITS.md).
