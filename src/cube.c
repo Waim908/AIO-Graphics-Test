@@ -61,6 +61,7 @@
 #include "inttypes.h"
 #if defined(VK_USE_PLATFORM_WIN32_KHR)
 #include "gpuinfo.h"  // AIO Graphics Test: --gpuinfo / --report mode
+#include "menu.h"     // AIO Graphics Test: in-app start menu
 #endif
 #define MILLION 1000000L
 #define BILLION 1000000000L
@@ -4187,6 +4188,23 @@ static void demo_init(struct demo *demo, int argc, char **argv) {
 // Include header required for parsing the command line options.
 #include <shellapi.h>
 
+// AIO Graphics Test helpers for WinMain argument handling.
+static int aio_cli_has(int argc, char **argv, const char *flag) {
+    for (int i = 0; i < argc; i++)
+        if (argv && argv[i] && strcmp(argv[i], flag) == 0) return 1;
+    return 0;
+}
+#define AIO_CLI_HAS(f) aio_cli_has(argc, argv, (f))
+#define AIO_FREE_ARGV()                               \
+    do {                                              \
+        if (argc > 0 && argv != NULL) {               \
+            for (int _j = 0; _j < argc; _j++)         \
+                if (argv[_j] != NULL) free(argv[_j]); \
+            free(argv);                               \
+            argv = NULL;                              \
+        }                                             \
+    } while (0)
+
 int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR pCmdLine, int nCmdShow) {
     MSG msg;    // message
     bool done;  // flag saying when app is complete
@@ -4226,18 +4244,37 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR pCmdLine,
         argv = NULL;
     }
 
-    // AIO Graphics Test: --gpuinfo / --report mode dumps GL+VK adapter info and exits,
-    // without bringing up the cube/swapchain.
+    // AIO Graphics Test: CLI shortcut --gpuinfo/--report dumps GL+VK adapter info and exits.
     for (int iii = 0; iii < argc; iii++) {
         if (argv && argv[iii] && (strcmp(argv[iii], "--gpuinfo") == 0 || strcmp(argv[iii], "--report") == 0)) {
             int rc = aio_run_gpuinfo();
-            if (argv != NULL) {
-                for (int j = 0; j < argc; j++)
-                    if (argv[j] != NULL) free(argv[j]);
-                free(argv);
-            }
+            AIO_FREE_ARGV();
             return rc;
         }
+    }
+
+    // Primary interface: in-app menu. Pick a test, then dispatch.
+    if (!AIO_CLI_HAS("--no-menu")) {
+        int mode = aio_show_menu(hInstance);
+        if (mode == AIO_MODE_EXIT) {
+            AIO_FREE_ARGV();
+            return 0;
+        }
+        if (mode == AIO_MODE_GPUINFO) {
+            int rc = aio_run_gpuinfo();
+            AIO_FREE_ARGV();
+            return rc;
+        }
+        if (mode != AIO_MODE_CUBE_VK) {
+            // OpenGL / Direct3D backends + benchmark land in later versions.
+            MessageBoxA(NULL,
+                        "This mode is coming in a future version.\n\n"
+                        "Available now: Cube (Vulkan) and GPU Info.",
+                        "AIO Graphics Test", MB_OK | MB_ICONINFORMATION);
+            AIO_FREE_ARGV();
+            return 0;
+        }
+        // AIO_MODE_CUBE_VK falls through to the Vulkan cube below.
     }
 
     demo_init(&demo, argc, argv);
@@ -4253,13 +4290,18 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR pCmdLine,
     }
 
     demo.connection = hInstance;
-    strncpy(demo.name, "Vulkan Cube", APP_NAME_STR_LEN);
+    // Title shows the active API layer; live FPS is appended each second in the run loop.
+    strncpy(demo.name, "AIO Graphics Test  -  Vulkan", APP_NAME_STR_LEN);
     demo_create_window(&demo);
     demo_init_vk_swapchain(&demo);
 
     demo_prepare(&demo);
 
     done = false;  // initialize loop condition variable
+
+    // AIO Graphics Test: live FPS HUD in the title bar (API layer + current FPS).
+    ULONGLONG aio_last_ms = GetTickCount64();
+    uint64_t aio_last_frame = 0;
 
     // main message loop
     while (!done) {
@@ -4282,6 +4324,19 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR pCmdLine,
             DispatchMessage(&msg);
         }
         RedrawWindow(demo.window, NULL, NULL, RDW_INTERNALPAINT);
+
+        // Update the FPS HUD ~twice a second.
+        ULONGLONG aio_now = GetTickCount64();
+        if (aio_now - aio_last_ms >= 500) {
+            double secs = (double)(aio_now - aio_last_ms) / 1000.0;
+            uint64_t cur = (uint64_t)demo.curFrame;
+            double fps = (secs > 0.0) ? (double)(cur - aio_last_frame) / secs : 0.0;
+            char aio_title[128];
+            snprintf(aio_title, sizeof(aio_title), "AIO Graphics Test  -  Vulkan  -  %.0f FPS", fps);
+            SetWindowTextA(demo.window, aio_title);
+            aio_last_ms = aio_now;
+            aio_last_frame = cur;
+        }
     }
 
     demo_cleanup(&demo);
