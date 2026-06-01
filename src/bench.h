@@ -4,6 +4,10 @@
 #ifndef AIO_BENCH_H
 #define AIO_BENCH_H
 
+// Vsync flag shared by all backends (set from the --vsync CLI flag in WinMain):
+// 1 = present with vsync, 0 = uncapped. Read at swapchain/present time.
+extern int aio_vsync;
+
 // Start a benchmark of the given duration (seconds). Allocates the sample store.
 void aio_bench_begin(int seconds);
 

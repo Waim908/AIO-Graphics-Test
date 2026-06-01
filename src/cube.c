@@ -4284,6 +4284,8 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR pCmdLine,
                 SetEnvironmentVariableA("DXVK_DISABLE_TIMELINE_SEMAPHORES", binary ? "1" : "0");
                 aio_bench_set_label(binary ? "DXVK Binary" : "DXVK Timeline");
             }
+        // Optional --vsync: present with vsync (default is uncapped).
+        if (AIO_CLI_HAS("--vsync")) aio_vsync = 1;
         if (strcmp(api, "gl") == 0) {
             int rc = aio_run_gl_cube(hInstance);
             AIO_FREE_ARGV();
@@ -4346,6 +4348,8 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR pCmdLine,
     // Title shows the active API layer; live FPS is appended each second in the run loop.
     strncpy(demo.name, "AIO Graphics Test  -  Vulkan", APP_NAME_STR_LEN);
     demo_create_window(&demo);
+    // Vsync = FIFO; uncapped = IMMEDIATE (swapchain falls back to FIFO if absent).
+    demo.presentMode = aio_vsync ? VK_PRESENT_MODE_FIFO_KHR : VK_PRESENT_MODE_IMMEDIATE_KHR;
     demo_init_vk_swapchain(&demo);
 
     demo_prepare(&demo);

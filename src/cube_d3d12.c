@@ -525,7 +525,7 @@ int aio_run_d3d12_cube(HINSTANCE hinst) {
 
         ID3D12CommandList *lists[1] = {(ID3D12CommandList *)cl};
         ID3D12CommandQueue_ExecuteCommandLists(queue, 1, lists);
-        IDXGISwapChain3_Present(swap, 0, 0);
+        IDXGISwapChain3_Present(swap, aio_vsync ? 1 : 0, 0);
 
         // Wait for the GPU to finish this frame (simple, not pipelined).
         fenceVal++;

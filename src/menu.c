@@ -68,6 +68,14 @@ static HWND g_verdict;        // probe verdict label
 static HWND g_run_all;        // "Run All" sweep button (Benchmark view)
 static int g_sweep_active;    // sequential run-all sweep in progress
 static int g_sweep_idx;       // current row in the sweep
+#define ID_DUR_FIRST 3600     // duration buttons (15/30/45/60 s)
+#define ID_VSYNC 3620
+static HWND g_dur_btn[4];
+static HWND g_dur_label;
+static HWND g_vsync_chk;
+static int g_bench_secs = 15;   // selected benchmark duration
+static int g_vsync_ui = 0;      // vsync toggle state
+static int g_bench_append = 0;  // launch_bench_row appends --bench/--vsync (Benchmark view)
 
 static void get_content_rect(HWND frame, RECT *out) {
     RECT rc;
@@ -85,8 +93,13 @@ static void destroy_content(void) {
     if (g_placeholder) { DestroyWindow(g_placeholder); g_placeholder = NULL; }
     if (g_verdict) { DestroyWindow(g_verdict); g_verdict = NULL; }
     if (g_run_all) { DestroyWindow(g_run_all); g_run_all = NULL; }
+    if (g_dur_label) { DestroyWindow(g_dur_label); g_dur_label = NULL; }
+    if (g_vsync_chk) { DestroyWindow(g_vsync_chk); g_vsync_chk = NULL; }
+    for (int i = 0; i < 4; i++)
+        if (g_dur_btn[i]) { DestroyWindow(g_dur_btn[i]); g_dur_btn[i] = NULL; }
     g_is_probe = 0;
     g_sweep_active = 0;
+    g_bench_append = 0;
     for (int i = 0; i < g_cbtn_n; i++) {
         if (g_cbtn[i]) DestroyWindow(g_cbtn[i]);
         g_cbtn[i] = NULL;
@@ -231,11 +244,10 @@ static void show_benchmark(HWND frame) {
     RECT cr;
     get_content_rect(frame, &cr);
 
+    g_bench_append = 1;  // rows get --bench <secs> [+ --vsync] appended at launch
     g_placeholder = CreateWindowA(
-        "STATIC",
-        "Benchmark one API (15 s each), or\n"
-        "tap Run All to sweep them. CSV saved.",
-        WS_CHILD | WS_VISIBLE | SS_LEFT, cr.left, cr.top, cr.right - cr.left - 200, 56, frame, NULL,
+        "STATIC", "Benchmark one API, or Run All to sweep them. Per-frame data -> CSV.",
+        WS_CHILD | WS_VISIBLE | SS_LEFT, cr.left, cr.top, cr.right - cr.left - 200, 22, frame, NULL,
         g_hinst, NULL);
     if (g_ui_font) SendMessage(g_placeholder, WM_SETFONT, (WPARAM)g_ui_font, TRUE);
 
@@ -245,25 +257,38 @@ static void show_benchmark(HWND frame) {
                               g_hinst, NULL);
     if (g_ui_font) SendMessage(g_run_all, WM_SETFONT, (WPARAM)g_ui_font, TRUE);
 
-    // Each row benchmarks one API/scene for 15s. apilabels MUST match the label
-    // each backend passes to aio_bench_finish (the DX11 ones = scene->label), so
-    // the result file AIO-Graphics-Test_bench_<label>.txt is found.
+    // Controls: benchmark length (15/30/45/60 s) + vsync toggle.
+    char dl[32];
+    snprintf(dl, sizeof(dl), "Length (%ds):", g_bench_secs);
+    g_dur_label = CreateWindowA("STATIC", dl, WS_CHILD | WS_VISIBLE | SS_LEFT, cr.left, cr.top + 50,
+                                96, 22, frame, NULL, g_hinst, NULL);
+    if (g_ui_font) SendMessage(g_dur_label, WM_SETFONT, (WPARAM)g_ui_font, TRUE);
+    static const int durs[4] = {15, 30, 45, 60};
+    for (int i = 0; i < 4; i++) {
+        char db[8];
+        snprintf(db, sizeof(db), "%ds", durs[i]);
+        g_dur_btn[i] = CreateWindowA("BUTTON", db, WS_CHILD | WS_VISIBLE | BS_PUSHBUTTON,
+                                     cr.left + 100 + i * 52, cr.top + 46, 48, 26, frame,
+                                     (HMENU)(INT_PTR)(ID_DUR_FIRST + i), g_hinst, NULL);
+        if (g_ui_font) SendMessage(g_dur_btn[i], WM_SETFONT, (WPARAM)g_ui_font, TRUE);
+    }
+    g_vsync_chk = CreateWindowA("BUTTON", "Vsync", WS_CHILD | WS_VISIBLE | BS_AUTOCHECKBOX,
+                                cr.left + 100 + 4 * 52 + 24, cr.top + 48, 80, 22, frame,
+                                (HMENU)(INT_PTR)ID_VSYNC, g_hinst, NULL);
+    if (g_ui_font) SendMessage(g_vsync_chk, WM_SETFONT, (WPARAM)g_ui_font, TRUE);
+    SendMessage(g_vsync_chk, BM_SETCHECK, g_vsync_ui ? BST_CHECKED : BST_UNCHECKED, 0);
+
+    // apilabels MUST match the label each backend passes to aio_bench_finish (the
+    // DX11 ones = scene->label); args are the base specs (--bench/--vsync appended).
     static const char *labels[] = {
         "Vulkan",            "OpenGL",         "D3D8: Cube",     "D3D9: Cube",
         "D3D11: Cube",       "D3D11: Instanced", "D3D11: Tessellate", "D3D11: Compute",
         "D3D11: Dolphin",    "D3D12: Cube",
     };
     static const char *args[] = {
-        "vk --bench 15",
-        "gl --bench 15",
-        "dx8 --bench 15",
-        "dx9 --bench 15",
-        "dx11 --scene spin --bench 15",
-        "dx11 --scene instanced --bench 15",
-        "dx11 --scene tess --bench 15",
-        "dx11 --scene compute --bench 15",
-        "dx11 --scene dolphin --bench 15",
-        "dx12 --bench 15",
+        "vk", "gl", "dx8", "dx9", "dx11 --scene spin",
+        "dx11 --scene instanced", "dx11 --scene tess", "dx11 --scene compute",
+        "dx11 --scene dolphin", "dx12",
     };
     static const char *apilabels[] = {
         "Vulkan",          "OpenGL",         "Direct3D 8",   "Direct3D 9",
@@ -271,7 +296,7 @@ static void show_benchmark(HWND frame) {
         "D3D11 Dolphin",   "Direct3D 12",
     };
     g_cbtn_n = (int)(sizeof(args) / sizeof(args[0]));
-    int y = cr.top + 58;
+    int y = cr.top + 86;
     for (int i = 0; i < g_cbtn_n; i++) {
         g_cbtn_arg[i] = args[i];
         g_cbtn_label[i] = apilabels[i];
@@ -425,7 +450,13 @@ static HANDLE launch_cube_window(const char *api) {
 static void launch_bench_row(HWND frame, int i) {
     if (i < 0 || i >= g_cbtn_n) return;
     if (g_cbtn_proc[i]) CloseHandle(g_cbtn_proc[i]);
-    g_cbtn_proc[i] = launch_cube_window(g_cbtn_arg[i]);
+    char arg[160];
+    if (g_bench_append)  // Benchmark view: append the chosen duration + vsync
+        snprintf(arg, sizeof(arg), "%s --bench %d%s", g_cbtn_arg[i], g_bench_secs,
+                 g_vsync_ui ? " --vsync" : "");
+    else  // probe view: args already complete (--bench 15 --semaphore ...)
+        snprintf(arg, sizeof(arg), "%s", g_cbtn_arg[i]);
+    g_cbtn_proc[i] = launch_cube_window(arg);
     if (g_cbtn_avg[i]) SetWindowTextA(g_cbtn_avg[i], "");
     if (g_cbtn_result[i]) SetWindowTextA(g_cbtn_result[i], "running...");
     SetTimer(frame, 1, 500, NULL);
@@ -517,6 +548,20 @@ static LRESULT CALLBACK shell_wndproc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM
                 g_sweep_active = 1;
                 g_sweep_idx = 0;
                 launch_bench_row(hwnd, 0);
+                return 0;
+            }
+            if (id >= ID_DUR_FIRST && id < ID_DUR_FIRST + 4) {  // benchmark length
+                static const int durs[4] = {15, 30, 45, 60};
+                g_bench_secs = durs[id - ID_DUR_FIRST];
+                if (g_dur_label) {
+                    char dl[32];
+                    snprintf(dl, sizeof(dl), "Length (%ds):", g_bench_secs);
+                    SetWindowTextA(g_dur_label, dl);
+                }
+                return 0;
+            }
+            if (id == ID_VSYNC) {  // vsync toggle
+                g_vsync_ui = (SendMessage(g_vsync_chk, BM_GETCHECK, 0, 0) == BST_CHECKED) ? 1 : 0;
                 return 0;
             }
             int cb = id - ID_CB_FIRST;

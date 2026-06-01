@@ -204,6 +204,8 @@ int aio_run_d3d8_cube(HINSTANCE hinst) {
     pp.BackBufferCount = 1;
     pp.EnableAutoDepthStencil = TRUE;
     pp.AutoDepthStencilFormat = D3DFMT_D24S8;
+    pp.FullScreen_PresentationInterval =
+        aio_vsync ? D3DPRESENT_INTERVAL_ONE : D3DPRESENT_INTERVAL_IMMEDIATE;
     pp.hDeviceWindow = hwnd;
 
     IDirect3DDevice8 *dev = NULL;

@@ -198,6 +198,8 @@ int aio_run_d3d9_cube(HINSTANCE hinst) {
     pp.BackBufferHeight = g_h;
     pp.EnableAutoDepthStencil = TRUE;
     pp.AutoDepthStencilFormat = D3DFMT_D24S8;
+    pp.PresentationInterval =
+        aio_vsync ? D3DPRESENT_INTERVAL_ONE : D3DPRESENT_INTERVAL_IMMEDIATE;
     pp.hDeviceWindow = hwnd;
 
     IDirect3DDevice9 *dev = NULL;

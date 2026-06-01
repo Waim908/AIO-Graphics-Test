@@ -21,6 +21,7 @@ static int g_seconds;  // requested duration
 static int g_active;
 static int g_warmup;   // first frames to discard (pipeline/swapchain warm-up)
 static char g_label_override[64];  // if set, overrides the result label (probe modes)
+int aio_vsync = 0;                 // shared vsync flag (set from --vsync)
 
 void aio_bench_set_label(const char *label) {
     if (label && label[0])

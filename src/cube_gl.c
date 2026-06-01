@@ -140,6 +140,12 @@ int aio_run_gl_cube(HINSTANCE hinst) {
         return 1;
     }
 
+    // Vsync via WGL_EXT_swap_control (if present): 1 = vsync, 0 = uncapped.
+    typedef BOOL(WINAPI * PFNWGLSWAPINTERVALEXTPROC)(int);
+    PFNWGLSWAPINTERVALEXTPROC p_swap_interval =
+        (PFNWGLSWAPINTERVALEXTPROC)wglGetProcAddress("wglSwapIntervalEXT");
+    if (p_swap_interval) p_swap_interval(aio_vsync ? 1 : 0);
+
     aio_hud_create(hinst);
     aio_hud_update(hwnd, "OpenGL  -  measuring...");
 

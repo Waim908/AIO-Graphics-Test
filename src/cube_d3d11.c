@@ -1408,7 +1408,7 @@ int aio_run_d3d11_cube(HINSTANCE hinst, const char *scene_name) {
         ID3D11DeviceContext_ClearRenderTargetView(ctx, rtv, clear);
         ID3D11DeviceContext_ClearDepthStencilView(ctx, dsv, D3D11_CLEAR_DEPTH, 1.0f, 0);
         scene->frame(ctx, t, aspect);
-        IDXGISwapChain_Present(swap, 0, 0);
+        IDXGISwapChain_Present(swap, aio_vsync ? 1 : 0, 0);
         frames++;
 
         if (bench_on) {
