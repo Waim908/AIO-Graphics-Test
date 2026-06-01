@@ -14,6 +14,9 @@
 // Copyright (c) 2026 The412Banner. Licensed under Apache-2.0 (see LICENSE).
 
 #define COBJMACROS
+// This mingw's dxguid lacks the D3D12 / newer-DXGI IIDs, so instantiate the
+// GUIDs we reference directly in this TU.
+#define INITGUID
 #ifndef WIN32_LEAN_AND_MEAN
 #define WIN32_LEAN_AND_MEAN
 #endif
