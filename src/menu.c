@@ -168,12 +168,17 @@ static void on_select(HWND frame, int action) {
                              "The menu stays here - switch back any time, or launch another test.");
             break;
         case AIO_MODE_CUBE_GL:
+            launch_cube_window("gl");
+            show_placeholder(frame, "Cube - OpenGL",
+                             "Launched the OpenGL cube in a new window.\n\n"
+                             "The menu stays here - switch back any time, or launch another test.");
+            break;
         case AIO_MODE_CUBE_DX9:
         case AIO_MODE_CUBE_DX11:
         case AIO_MODE_CUBE_DX12:
             show_placeholder(frame, "Cube",
                              "This graphics API backend is coming in a future version.\n\n"
-                             "Available now: Cube (Vulkan) and GPU Info.");
+                             "Available now: Cube (Vulkan), Cube (OpenGL), and GPU Info.");
             break;
         case AIO_MODE_BENCH:
             launch_cube_window("vk --bench 15");
