@@ -19,6 +19,7 @@
 
 #define SB_W 150
 #define HEADER_H 26
+#define FOOT_H 24  // reserved strip at the bottom for the footnote
 #define ID_FIRST_BUTTON 1000
 #define ID_TAB 2000
 
@@ -40,6 +41,8 @@ static SbItem g_items[] = {
 static HINSTANCE g_hinst;
 static HWND g_header;
 static HWND g_sidebar[NITEMS];
+static HWND g_foot_a, g_foot_heart, g_foot_b;  // footnote: "Built with" [red heart] "for ..."
+static HWND g_version;  // bottom-right version label
 static HFONT g_ui_font;
 static HFONT g_ui_font_bold;
 static HFONT g_header_font;
@@ -83,7 +86,7 @@ static void get_content_rect(HWND frame, RECT *out) {
     out->left = SB_W + 10;
     out->top = 10 + HEADER_H;
     out->right = rc.right - 10;
-    out->bottom = rc.bottom - 10;
+    out->bottom = rc.bottom - 10 - FOOT_H;  // leave room for the footnote
 }
 
 static void destroy_content(void) {
@@ -427,6 +430,41 @@ static void layout_content(HWND frame) {
         MoveWindow(g_placeholder, cr.left, cr.top, cr.right - cr.left, cr.bottom - cr.top, TRUE);
 }
 
+#define FOOT_A "Built with "
+#define FOOT_B " for the Emulation Community"
+
+// Center the footnote ("Built with [red heart] for the Emulation Community") in
+// the reserved strip at the bottom of the window.
+static void layout_footnote(HWND frame) {
+    if (!g_foot_a) return;
+    RECT rc;
+    GetClientRect(frame, &rc);
+    HDC hdc = GetDC(frame);
+    HFONT old = (HFONT)SelectObject(hdc, g_ui_font);
+    SIZE sa, sh, sb;
+    GetTextExtentPoint32A(hdc, FOOT_A, (int)strlen(FOOT_A), &sa);
+    GetTextExtentPoint32W(hdc, L"\u2665", 1, &sh);
+    GetTextExtentPoint32A(hdc, FOOT_B, (int)strlen(FOOT_B), &sb);
+    SelectObject(hdc, old);
+    ReleaseDC(frame, hdc);
+    int total = sa.cx + sh.cx + sb.cx;
+    int x = (rc.right - total) / 2;
+    if (x < 4) x = 4;
+    int y = rc.bottom - FOOT_H + 4, h = 18;
+    MoveWindow(g_foot_a, x, y, sa.cx + 2, h, TRUE);
+    MoveWindow(g_foot_heart, x + sa.cx, y, sh.cx + 2, h, TRUE);
+    MoveWindow(g_foot_b, x + sa.cx + sh.cx, y, sb.cx + 2, h, TRUE);
+    if (g_version) {  // bottom-right corner
+        SIZE sv;
+        HDC h2 = GetDC(frame);
+        HFONT o2 = (HFONT)SelectObject(h2, g_ui_font);
+        GetTextExtentPoint32A(h2, AIO_VERSION, (int)strlen(AIO_VERSION), &sv);
+        SelectObject(h2, o2);
+        ReleaseDC(frame, h2);
+        MoveWindow(g_version, rc.right - sv.cx - 10, y, sv.cx + 4, h, TRUE);
+    }
+}
+
 // Launches a cube/benchmark in a new window. Returns the process handle (caller
 // closes it) or NULL on failure.
 static HANDLE launch_cube_window(const char *api) {
@@ -538,6 +576,22 @@ static LRESULT CALLBACK shell_wndproc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM
             g_header = CreateWindowA("STATIC", "AIO Graphics Test", WS_CHILD | WS_VISIBLE | SS_LEFT, SB_W + 10,
                                      8, 300, HEADER_H - 4, hwnd, NULL, g_hinst, NULL);
             if (g_header_font) SendMessage(g_header, WM_SETFONT, (WPARAM)g_header_font, TRUE);
+            // Footnote ("Built with [heart] for the Emulation Community") + version.
+            g_foot_a = CreateWindowA("STATIC", FOOT_A, WS_CHILD | WS_VISIBLE | SS_LEFT, 0, 0, 10, 10,
+                                     hwnd, NULL, g_hinst, NULL);
+            g_foot_heart = CreateWindowW(L"STATIC", L"\u2665", WS_CHILD | WS_VISIBLE | SS_CENTER, 0, 0,
+                                         10, 10, hwnd, NULL, g_hinst, NULL);
+            g_foot_b = CreateWindowA("STATIC", FOOT_B, WS_CHILD | WS_VISIBLE | SS_LEFT, 0, 0, 10, 10,
+                                     hwnd, NULL, g_hinst, NULL);
+            g_version = CreateWindowA("STATIC", AIO_VERSION, WS_CHILD | WS_VISIBLE | SS_RIGHT, 0, 0,
+                                      10, 10, hwnd, NULL, g_hinst, NULL);
+            if (g_ui_font) {
+                SendMessage(g_foot_a, WM_SETFONT, (WPARAM)g_ui_font, TRUE);
+                SendMessage(g_foot_heart, WM_SETFONT, (WPARAM)g_ui_font, TRUE);
+                SendMessage(g_foot_b, WM_SETFONT, (WPARAM)g_ui_font, TRUE);
+                SendMessage(g_version, WM_SETFONT, (WPARAM)g_ui_font, TRUE);
+            }
+            layout_footnote(hwnd);
             show_placeholder(hwnd, "AIO Graphics Test",
                              "Select a test from the menu on the left.\n\n"
                              "GPU Info opens here; cube tests open in a new window.");
@@ -642,8 +696,19 @@ static LRESULT CALLBACK shell_wndproc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM
             }
             return 0;
         }
+        case WM_CTLCOLORSTATIC: {
+            HWND ctl = (HWND)lParam;
+            if (ctl == g_foot_heart || ctl == g_foot_a || ctl == g_foot_b || ctl == g_version) {
+                HDC hdc = (HDC)wParam;
+                SetTextColor(hdc, ctl == g_foot_heart ? RGB(214, 69, 79) : RGB(112, 112, 120));
+                SetBkMode(hdc, TRANSPARENT);
+                return (LRESULT)GetSysColorBrush(COLOR_BTNFACE);
+            }
+            break;
+        }
         case WM_SIZE:
             layout_content(hwnd);
+            layout_footnote(hwnd);
             return 0;
         case WM_CLOSE:
             DestroyWindow(hwnd);
@@ -690,7 +755,7 @@ int aio_run_shell(HINSTANCE hInstance) {
     wc.lpszClassName = cls;
     RegisterClassA(&wc);
 
-    int w = 840, h = 540;
+    int w = 840, h = 560;
     int sx = (GetSystemMetrics(SM_CXSCREEN) - w) / 2;
     int sy = (GetSystemMetrics(SM_CYSCREEN) - h) / 2;
     if (sx < 0) sx = 0;
