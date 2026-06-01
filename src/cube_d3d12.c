@@ -14,7 +14,12 @@
 // Copyright (c) 2026 The412Banner. Licensed under Apache-2.0 (see LICENSE).
 
 #define COBJMACROS
+#ifndef WIN32_LEAN_AND_MEAN
 #define WIN32_LEAN_AND_MEAN
+#endif
+#ifndef _WIN32_WINNT
+#define _WIN32_WINNT 0x0A00  // Windows 10: D3D12 + GetTickCount64
+#endif
 #include <windows.h>
 #include <d3d12.h>
 #include <dxgi1_4.h>
@@ -274,8 +279,8 @@ int aio_run_d3d12_cube(HINSTANCE hinst) {
     ID3D12Device_CreateDescriptorHeap(dev, &hd, &IID_ID3D12DescriptorHeap, (void **)&dsvHeap);
     UINT rtvSize = ID3D12Device_GetDescriptorHandleIncrementSize(dev, D3D12_DESCRIPTOR_HEAP_TYPE_RTV);
 
-    D3D12_CPU_DESCRIPTOR_HANDLE rtvStart;
-    ID3D12DescriptorHeap_GetCPUDescriptorHandleForHeapStart(rtvHeap, &rtvStart);
+    D3D12_CPU_DESCRIPTOR_HANDLE rtvStart =
+        ID3D12DescriptorHeap_GetCPUDescriptorHandleForHeapStart(rtvHeap);
     ID3D12Resource *rt[FRAME_COUNT];
     for (UINT i = 0; i < FRAME_COUNT; i++) {
         rt[i] = NULL;
@@ -308,8 +313,8 @@ int aio_run_d3d12_cube(HINSTANCE hinst) {
                                              D3D12_RESOURCE_STATE_DEPTH_WRITE, &cv,
                                              &IID_ID3D12Resource, (void **)&depth);
     }
-    D3D12_CPU_DESCRIPTOR_HANDLE dsvHandle;
-    ID3D12DescriptorHeap_GetCPUDescriptorHandleForHeapStart(dsvHeap, &dsvHandle);
+    D3D12_CPU_DESCRIPTOR_HANDLE dsvHandle =
+        ID3D12DescriptorHeap_GetCPUDescriptorHandleForHeapStart(dsvHeap);
     ID3D12Device_CreateDepthStencilView(dev, depth, NULL, dsvHandle);
 
     // Root signature: a single root CBV at b0.
