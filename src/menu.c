@@ -280,6 +280,9 @@ static int read_dxvk_log_version(char *out, size_t n) {
             char *p = strstr(line, "DXVK: ");
             if (p) {
                 p += 6;
+                // DXVK logs several "DXVK:" lines (e.g. "DXVK: Using 8 compiler
+                // threads"); the version line's value starts with 'v' or a digit.
+                if (*p != 'v' && !(*p >= '0' && *p <= '9')) continue;
                 p[strcspn(p, "\r\n")] = '\0';
                 if (*p) {
                     snprintf(out, n, "%s", p);
