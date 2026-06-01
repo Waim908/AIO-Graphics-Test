@@ -60,6 +60,9 @@ static const char *g_cbtn_label[MAX_CB];  // API label for the result file name
 static HANDLE g_cbtn_proc[MAX_CB];   // running benchmark process (polled)
 static int g_cbtn_n;
 static int g_cb_bench;  // 1 = Benchmark view (poll + show result); 0 = launch-only
+static int g_is_probe;        // semaphore-probe view active (verdict logic)
+static float g_probe_avg[2];  // [0] = timeline avg FPS, [1] = binary avg FPS
+static HWND g_verdict;        // probe verdict label
 
 static void get_content_rect(HWND frame, RECT *out) {
     RECT rc;
@@ -75,6 +78,8 @@ static void destroy_content(void) {
     if (g_edit_gl) { DestroyWindow(g_edit_gl); g_edit_gl = NULL; }
     if (g_tab) { DestroyWindow(g_tab); g_tab = NULL; }
     if (g_placeholder) { DestroyWindow(g_placeholder); g_placeholder = NULL; }
+    if (g_verdict) { DestroyWindow(g_verdict); g_verdict = NULL; }
+    g_is_probe = 0;
     for (int i = 0; i < g_cbtn_n; i++) {
         if (g_cbtn[i]) DestroyWindow(g_cbtn[i]);
         g_cbtn[i] = NULL;
@@ -246,24 +251,60 @@ static void show_dx11_scenes(HWND frame) {
     }
 }
 
+// Best-effort: read the loaded d3d11.dll (DXVK) product version. Writes
+// "not found" if d3d11.dll won't load, "unknown" if it has no version stamp.
+static void get_dxvk_version(char *out, size_t n) {
+    snprintf(out, n, "unknown");
+    HMODULE h = LoadLibraryA("d3d11.dll");
+    if (!h) {
+        snprintf(out, n, "not found (no d3d11.dll)");
+        return;
+    }
+    char path[MAX_PATH];
+    if (GetModuleFileNameA(h, path, MAX_PATH)) {
+        DWORD dummy = 0, sz = GetFileVersionInfoSizeA(path, &dummy);
+        if (sz) {
+            void *buf = malloc(sz);
+            if (buf && GetFileVersionInfoA(path, 0, sz, buf)) {
+                VS_FIXEDFILEINFO *ffi = NULL;
+                UINT fl = 0;
+                if (VerQueryValueA(buf, "\\", (void **)&ffi, &fl) && ffi &&
+                    (ffi->dwProductVersionMS || ffi->dwProductVersionLS)) {
+                    snprintf(out, n, "%u.%u.%u", (unsigned)HIWORD(ffi->dwProductVersionMS),
+                             (unsigned)LOWORD(ffi->dwProductVersionMS),
+                             (unsigned)HIWORD(ffi->dwProductVersionLS));
+                }
+            }
+            free(buf);
+        }
+    }
+    FreeLibrary(h);
+}
+
 // Semaphore probe: benchmark the same heavy DXVK workload (instanced D3D11) with
 // timeline vs binary semaphores, to measure the Turnip-kgsl timeline-semaphore
 // regression. Reuses the benchmark buttons (poll + show result).
 static void show_semaphore_probe(HWND frame) {
     destroy_content();
     g_cb_bench = 1;
+    g_is_probe = 1;
+    g_probe_avg[0] = g_probe_avg[1] = 0.0f;
     SetWindowTextA(g_header, "Semaphore Probe (DXVK / Turnip)");
     RECT cr;
     get_content_rect(frame, &cr);
 
-    g_placeholder = CreateWindowA(
-        "STATIC",
-        "Benchmarks the instanced D3D11 cube (heavy DXVK load) twice: with timeline\n"
-        "vs binary semaphores. On Turnip-kgsl, the timeline path can serialize the\n"
-        "finish thread and roughly halve FPS. Compare the two below (needs a DXVK\n"
-        "build that honors DXVK_DISABLE_TIMELINE_SEMAPHORES).",
-        WS_CHILD | WS_VISIBLE | SS_LEFT, cr.left, cr.top, cr.right - cr.left, 84, frame, NULL,
-        g_hinst, NULL);
+    char dxvkver[64];
+    get_dxvk_version(dxvkver, sizeof(dxvkver));
+    char intro[512];
+    snprintf(intro, sizeof(intro),
+             "Loaded DXVK: %s\n\n"
+             "Benchmarks the instanced D3D11 cube (heavy DXVK load) twice: with timeline\n"
+             "vs binary semaphores. On Turnip-kgsl the timeline path can serialize the\n"
+             "finish thread and roughly halve FPS. The binary run only differs on a DXVK\n"
+             "build that honors DXVK_DISABLE_TIMELINE_SEMAPHORES.",
+             dxvkver);
+    g_placeholder = CreateWindowA("STATIC", intro, WS_CHILD | WS_VISIBLE | SS_LEFT, cr.left, cr.top,
+                                  cr.right - cr.left, 104, frame, NULL, g_hinst, NULL);
     if (g_ui_font) SendMessage(g_placeholder, WM_SETFONT, (WPARAM)g_ui_font, TRUE);
 
     static const char *labels[] = {"Timeline semaphores (15s)", "Binary semaphores (15s)"};
@@ -271,7 +312,7 @@ static void show_semaphore_probe(HWND frame) {
                                  "dx11 --scene instanced --bench 15 --semaphore binary"};
     static const char *apilabels[] = {"DXVK Timeline", "DXVK Binary"};
     g_cbtn_n = 2;
-    int y = cr.top + 96;
+    int y = cr.top + 116;
     for (int i = 0; i < g_cbtn_n; i++) {
         g_cbtn_arg[i] = args[i];
         g_cbtn_label[i] = apilabels[i];
@@ -289,6 +330,11 @@ static void show_semaphore_probe(HWND frame) {
         if (g_ui_font) SendMessage(g_cbtn_result[i], WM_SETFONT, (WPARAM)g_ui_font, TRUE);
         y += 40;
     }
+    // Verdict line (filled once both runs finish).
+    g_verdict = CreateWindowA("STATIC", "Run both, then a verdict appears here.",
+                              WS_CHILD | WS_VISIBLE | SS_LEFT, cr.left, y + 8,
+                              cr.right - cr.left, 48, frame, NULL, g_hinst, NULL);
+    if (g_ui_font_bold) SendMessage(g_verdict, WM_SETFONT, (WPARAM)g_ui_font_bold, TRUE);
 }
 
 static void layout_content(HWND frame) {
@@ -453,6 +499,30 @@ static LRESULT CALLBACK shell_wndproc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM
                         }
                         if (g_cbtn_avg[i]) SetWindowTextA(g_cbtn_avg[i], avgtxt);
                         if (g_cbtn_result[i]) SetWindowTextA(g_cbtn_result[i], mmtxt);
+                        // Semaphore probe: record avg, and once both runs are in,
+                        // judge the timeline-vs-binary result.
+                        if (g_is_probe && i < 2 && a > 0.0f) {
+                            g_probe_avg[i] = a;
+                            float tl = g_probe_avg[0], bn = g_probe_avg[1];
+                            if (tl > 0.0f && bn > 0.0f && g_verdict) {
+                                char vtxt[160];
+                                float ratio = bn / tl;
+                                if (ratio > 1.15f)
+                                    snprintf(vtxt, sizeof(vtxt),
+                                             "Timeline regression CONFIRMED: binary is %.2fx faster "
+                                             "(%.0f vs %.0f FPS).", ratio, bn, tl);
+                                else if (ratio < 0.87f)
+                                    snprintf(vtxt, sizeof(vtxt),
+                                             "Binary is slower (%.2fx) - timeline is better here "
+                                             "(%.0f vs %.0f FPS).", ratio, bn, tl);
+                                else
+                                    snprintf(vtxt, sizeof(vtxt),
+                                             "No significant difference (%.0f vs %.0f FPS) - this "
+                                             "DXVK likely ignores the toggle, or isn't affected.",
+                                             tl, bn);
+                                SetWindowTextA(g_verdict, vtxt);
+                            }
+                        }
                     } else if (g_cbtn_result[i]) {
                         SetWindowTextA(g_cbtn_result[i], "(no result file)");
                     }
