@@ -6,8 +6,9 @@
 
 #include <windows.h>
 
-// Opens a Direct3D 11 cube window and runs it (honoring an active --bench).
-// Returns a process exit code.
-int aio_run_d3d11_cube(HINSTANCE hinst);
+// Opens a Direct3D 11 scene window and runs it (honoring an active --bench).
+// scene_name selects the test ("spin", "textured", "instanced", ...); NULL or an
+// unknown name falls back to the spinning cube. Returns a process exit code.
+int aio_run_d3d11_cube(HINSTANCE hinst, const char *scene_name);
 
 #endif  // AIO_CUBE_D3D11_H

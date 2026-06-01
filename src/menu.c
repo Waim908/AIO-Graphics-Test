@@ -48,13 +48,15 @@ static HWND g_edit_vk;   // GPU Info: Vulkan tab text
 static HWND g_edit_gl;   // GPU Info: OpenGL tab text
 static HWND g_placeholder;
 
-#define ID_CB_FIRST 3000  // content-area buttons (Benchmark view)
-static HWND g_cbtn[4];
-static HWND g_cbtn_result[4];   // result label next to each benchmark button
-static const char *g_cbtn_arg[4];
-static const char *g_cbtn_label[4];  // API label for the result file name
-static HANDLE g_cbtn_proc[4];   // running benchmark process (polled)
+#define ID_CB_FIRST 3000  // content-area buttons (Benchmark + scene-picker views)
+#define MAX_CB 8
+static HWND g_cbtn[MAX_CB];
+static HWND g_cbtn_result[MAX_CB];   // result label next to each benchmark button
+static const char *g_cbtn_arg[MAX_CB];
+static const char *g_cbtn_label[MAX_CB];  // API label for the result file name
+static HANDLE g_cbtn_proc[MAX_CB];   // running benchmark process (polled)
 static int g_cbtn_n;
+static int g_cb_bench;  // 1 = Benchmark view (poll + show result); 0 = launch-only
 
 static void get_content_rect(HWND frame, RECT *out) {
     RECT rc;
@@ -141,6 +143,7 @@ static void show_placeholder(HWND frame, const char *title, const char *msg) {
 
 static void show_benchmark(HWND frame) {
     destroy_content();
+    g_cb_bench = 1;  // these buttons run a benchmark and poll for a result file
     SetWindowTextA(g_header, "Benchmark");
     RECT cr;
     get_content_rect(frame, &cr);
@@ -171,6 +174,41 @@ static void show_benchmark(HWND frame) {
             CreateWindowA("STATIC", "", WS_CHILD | WS_VISIBLE | SS_LEFT, cr.left + 252, y + 8,
                           (cr.right - (cr.left + 252)), 26, frame, NULL, g_hinst, NULL);
         if (g_ui_font) SendMessage(g_cbtn_result[i], WM_SETFONT, (WPARAM)g_ui_font, TRUE);
+        y += 44;
+    }
+}
+
+// Direct3D 11 test-suite picker: each button launches one DX11 scene in a new
+// window. These are launch-only (no benchmark polling).
+static void show_dx11_scenes(HWND frame) {
+    destroy_content();
+    g_cb_bench = 0;  // launch-only buttons
+    SetWindowTextA(g_header, "Cube - Direct3D 11 (DXVK)");
+    RECT cr;
+    get_content_rect(frame, &cr);
+
+    g_placeholder = CreateWindowA(
+        "STATIC",
+        "Direct3D 11 test suite (tests the DXVK path). Each opens in a new window;\n"
+        "the menu stays here. Press Esc in a test window to close it.",
+        WS_CHILD | WS_VISIBLE | SS_LEFT, cr.left, cr.top, cr.right - cr.left, 56, frame, NULL,
+        g_hinst, NULL);
+    if (g_ui_font) SendMessage(g_placeholder, WM_SETFONT, (WPARAM)g_ui_font, TRUE);
+
+    static const char *labels[] = {"Spinning cube", "Textured cube", "Instanced (512 cubes)"};
+    static const char *args[] = {"dx11 --scene spin", "dx11 --scene textured",
+                                 "dx11 --scene instanced"};
+    g_cbtn_n = (int)(sizeof(args) / sizeof(args[0]));
+    int y = cr.top + 70;
+    for (int i = 0; i < g_cbtn_n; i++) {
+        g_cbtn_arg[i] = args[i];
+        g_cbtn_label[i] = NULL;
+        g_cbtn_proc[i] = NULL;
+        g_cbtn_result[i] = NULL;
+        g_cbtn[i] = CreateWindowA("BUTTON", labels[i], WS_CHILD | WS_VISIBLE | BS_PUSHBUTTON,
+                                  cr.left, y, 240, 34, frame, (HMENU)(INT_PTR)(ID_CB_FIRST + i),
+                                  g_hinst, NULL);
+        if (g_ui_font) SendMessage(g_cbtn[i], WM_SETFONT, (WPARAM)g_ui_font, TRUE);
         y += 44;
     }
 }
@@ -235,14 +273,9 @@ static void on_select(HWND frame, int action) {
                              "The menu stays here - switch back any time, or launch another test.");
             break;
         }
-        case AIO_MODE_CUBE_DX11: {
-            HANDLE h = launch_cube_window("dx11");
-            if (h) CloseHandle(h);
-            show_placeholder(frame, "Cube - Direct3D 11",
-                             "Launched the Direct3D 11 cube in a new window (tests the DXVK path).\n\n"
-                             "The menu stays here - switch back any time, or launch another test.");
+        case AIO_MODE_CUBE_DX11:
+            show_dx11_scenes(frame);  // pick a scene from the DX11 test suite
             break;
-        }
         case AIO_MODE_CUBE_DX9:
         case AIO_MODE_CUBE_DX12:
             show_placeholder(frame, "Cube",
@@ -278,11 +311,16 @@ static LRESULT CALLBACK shell_wndproc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM
         case WM_COMMAND: {
             int id = LOWORD(wParam);
             int cb = id - ID_CB_FIRST;
-            if (cb >= 0 && cb < g_cbtn_n) {  // Benchmark-view API buttons
-                if (g_cbtn_proc[cb]) CloseHandle(g_cbtn_proc[cb]);
-                g_cbtn_proc[cb] = launch_cube_window(g_cbtn_arg[cb]);
-                if (g_cbtn_result[cb]) SetWindowTextA(g_cbtn_result[cb], "running...");
-                SetTimer(hwnd, 1, 500, NULL);
+            if (cb >= 0 && cb < g_cbtn_n) {  // content-area buttons
+                if (g_cb_bench) {            // Benchmark view: poll for a result file
+                    if (g_cbtn_proc[cb]) CloseHandle(g_cbtn_proc[cb]);
+                    g_cbtn_proc[cb] = launch_cube_window(g_cbtn_arg[cb]);
+                    if (g_cbtn_result[cb]) SetWindowTextA(g_cbtn_result[cb], "running...");
+                    SetTimer(hwnd, 1, 500, NULL);
+                } else {  // Scene picker: fire-and-forget launch in a new window
+                    HANDLE h = launch_cube_window(g_cbtn_arg[cb]);
+                    if (h) CloseHandle(h);
+                }
                 return 0;
             }
             int idx = id - ID_FIRST_BUTTON;
