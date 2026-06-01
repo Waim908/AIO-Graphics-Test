@@ -1,9 +1,10 @@
-// AIO Graphics Test - GPU info / report mode (--gpuinfo / --report).
+// AIO Graphics Test - GPU info / report (GL + Vulkan adapter dump).
 //
-// Self-contained: opens its own VkInstance to enumerate Vulkan adapters, and
-// spins up a throwaway WGL OpenGL context to read GL_VENDOR/RENDERER/VERSION/
-// GLSL/EXTENSIONS. Output goes to the console (best-effort) AND to a report
-// file, so results survive even if no console is attached. Replaces GPUInfo.exe.
+// Builds a text report by (a) opening its own VkInstance to enumerate Vulkan
+// adapters and (b) spinning up a throwaway WGL OpenGL context to read
+// GL_VENDOR/RENDERER/VERSION/GLSL/EXTENSIONS. The report can be returned as a
+// string (for the in-app GPU Info window) or written to file + console (CLI).
+// Replaces GPUInfo.exe.
 //
 // Copyright (c) 2026 The412Banner. Licensed under Apache-2.0 (see LICENSE).
 
@@ -15,6 +16,7 @@
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
 
 #include "gpuinfo.h"
 
@@ -24,19 +26,39 @@
 
 #define AIO_REPORT_FILE "AIO-Graphics-Test_report.txt"
 
-static FILE *g_report = NULL;
+// ----------------------------------------------------------- growable string
+typedef struct {
+    char *buf;
+    size_t len;
+    size_t cap;
+} StrBuf;
 
-// Write to both the report file and stdout.
-static void out(const char *fmt, ...) {
+static void sb_init(StrBuf *sb) {
+    sb->cap = 4096;
+    sb->len = 0;
+    sb->buf = (char *)malloc(sb->cap);
+    if (sb->buf) sb->buf[0] = '\0';
+}
+
+static void sb_appendf(StrBuf *sb, const char *fmt, ...) {
+    if (!sb->buf) return;
     va_list ap;
-    if (g_report) {
-        va_start(ap, fmt);
-        vfprintf(g_report, fmt, ap);
-        va_end(ap);
+    va_start(ap, fmt);
+    int n = vsnprintf(NULL, 0, fmt, ap);
+    va_end(ap);
+    if (n < 0) return;
+    if (sb->len + (size_t)n + 1 > sb->cap) {
+        size_t ncap = sb->cap * 2;
+        while (sb->len + (size_t)n + 1 > ncap) ncap *= 2;
+        char *nb = (char *)realloc(sb->buf, ncap);
+        if (!nb) return;
+        sb->buf = nb;
+        sb->cap = ncap;
     }
     va_start(ap, fmt);
-    vfprintf(stdout, fmt, ap);
+    vsnprintf(sb->buf + sb->len, (size_t)n + 1, fmt, ap);
     va_end(ap);
+    sb->len += (size_t)n;
 }
 
 static const char *vk_device_type_str(VkPhysicalDeviceType t) {
@@ -50,23 +72,20 @@ static const char *vk_device_type_str(VkPhysicalDeviceType t) {
 }
 
 // ------------------------------------------------------------- OpenGL section
-static void report_opengl(void) {
-    out("\n==================== OpenGL ====================\n");
+static void report_opengl(StrBuf *sb) {
+    sb_appendf(sb, "\r\n==================== OpenGL ====================\r\n");
 
     WNDCLASSA wc;
     memset(&wc, 0, sizeof(wc));
     wc.lpfnWndProc = DefWindowProcA;
     wc.hInstance = GetModuleHandle(NULL);
     wc.lpszClassName = "AIOGpuInfoGLWindow";
-    if (!RegisterClassA(&wc)) {
-        out("OpenGL: could not register helper window class.\n");
-        return;
-    }
+    RegisterClassA(&wc);  // ok if already registered
 
     HWND hwnd = CreateWindowA(wc.lpszClassName, "gl", WS_OVERLAPPEDWINDOW, 0, 0, 16, 16, NULL, NULL,
                               wc.hInstance, NULL);
     if (!hwnd) {
-        out("OpenGL: could not create helper window.\n");
+        sb_appendf(sb, "OpenGL: could not create helper window.\r\n");
         return;
     }
 
@@ -83,7 +102,7 @@ static void report_opengl(void) {
 
     int pf = ChoosePixelFormat(dc, &pfd);
     if (pf == 0 || !SetPixelFormat(dc, pf, &pfd)) {
-        out("OpenGL: no compatible pixel format (GL may be unavailable in this container).\n");
+        sb_appendf(sb, "OpenGL: no compatible pixel format (GL may be unavailable here).\r\n");
         ReleaseDC(hwnd, dc);
         DestroyWindow(hwnd);
         return;
@@ -91,7 +110,7 @@ static void report_opengl(void) {
 
     HGLRC rc = wglCreateContext(dc);
     if (!rc || !wglMakeCurrent(dc, rc)) {
-        out("OpenGL: could not create/make-current a WGL context.\n");
+        sb_appendf(sb, "OpenGL: could not create/make-current a WGL context.\r\n");
         if (rc) wglDeleteContext(rc);
         ReleaseDC(hwnd, dc);
         DestroyWindow(hwnd);
@@ -104,14 +123,14 @@ static void report_opengl(void) {
     const char *glsl = (const char *)glGetString(GL_SHADING_LANGUAGE_VERSION);
     const char *exts = (const char *)glGetString(GL_EXTENSIONS);
 
-    out("GL_VENDOR                   : %s\n", vendor ? vendor : "(null)");
-    out("GL_RENDERER                 : %s\n", renderer ? renderer : "(null)");
-    out("GL_VERSION                  : %s\n", version ? version : "(null)");
-    out("GL_SHADING_LANGUAGE_VERSION : %s\n", glsl ? glsl : "(null)");
+    sb_appendf(sb, "GL_VENDOR                   : %s\r\n", vendor ? vendor : "(null)");
+    sb_appendf(sb, "GL_RENDERER                 : %s\r\n", renderer ? renderer : "(null)");
+    sb_appendf(sb, "GL_VERSION                  : %s\r\n", version ? version : "(null)");
+    sb_appendf(sb, "GL_SHADING_LANGUAGE_VERSION : %s\r\n", glsl ? glsl : "(null)");
     if (exts) {
-        out("GL_EXTENSIONS               :\n%s\n", exts);
+        sb_appendf(sb, "GL_EXTENSIONS               :\r\n%s\r\n", exts);
     } else {
-        out("GL_EXTENSIONS               : (null / core profile)\n");
+        sb_appendf(sb, "GL_EXTENSIONS               : (null / core profile)\r\n");
     }
 
     wglMakeCurrent(NULL, NULL);
@@ -121,8 +140,8 @@ static void report_opengl(void) {
 }
 
 // ------------------------------------------------------------- Vulkan section
-static void report_vulkan(void) {
-    out("\n==================== Vulkan ====================\n");
+static void report_vulkan(StrBuf *sb) {
+    sb_appendf(sb, "\r\n==================== Vulkan ====================\r\n");
 
     VkApplicationInfo app;
     memset(&app, 0, sizeof(app));
@@ -137,21 +156,19 @@ static void report_vulkan(void) {
     ici.pApplicationInfo = &app;
 
     VkInstance inst = VK_NULL_HANDLE;
-    VkResult err = vkCreateInstance(&ici, NULL, &inst);
-    if (err != VK_SUCCESS) {
-        out("Vulkan: vkCreateInstance failed (err %d) - no Vulkan ICD reachable.\n", (int)err);
+    if (vkCreateInstance(&ici, NULL, &inst) != VK_SUCCESS) {
+        sb_appendf(sb, "Vulkan: vkCreateInstance failed - no Vulkan ICD reachable.\r\n");
         return;
     }
 
-    // Instance extensions.
     uint32_t inst_ext_count = 0;
     vkEnumerateInstanceExtensionProperties(NULL, &inst_ext_count, NULL);
     if (inst_ext_count > 0) {
         VkExtensionProperties *ie = malloc(sizeof(VkExtensionProperties) * inst_ext_count);
         if (ie) {
             vkEnumerateInstanceExtensionProperties(NULL, &inst_ext_count, ie);
-            out("Instance extensions (%u):\n", inst_ext_count);
-            for (uint32_t i = 0; i < inst_ext_count; i++) out("  %s\n", ie[i].extensionName);
+            sb_appendf(sb, "Instance extensions (%u):\r\n", inst_ext_count);
+            for (uint32_t i = 0; i < inst_ext_count; i++) sb_appendf(sb, "  %s\r\n", ie[i].extensionName);
             free(ie);
         }
     }
@@ -159,7 +176,7 @@ static void report_vulkan(void) {
     uint32_t gpu_count = 0;
     vkEnumeratePhysicalDevices(inst, &gpu_count, NULL);
     if (gpu_count == 0) {
-        out("Vulkan: no physical devices found.\n");
+        sb_appendf(sb, "Vulkan: no physical devices found.\r\n");
         vkDestroyInstance(inst, NULL);
         return;
     }
@@ -169,67 +186,80 @@ static void report_vulkan(void) {
         return;
     }
     vkEnumeratePhysicalDevices(inst, &gpu_count, gpus);
-    out("\nPhysical devices: %u\n", gpu_count);
+    sb_appendf(sb, "\r\nPhysical devices: %u\r\n", gpu_count);
 
     for (uint32_t g = 0; g < gpu_count; g++) {
         VkPhysicalDeviceProperties p;
         vkGetPhysicalDeviceProperties(gpus[g], &p);
 
-        uint32_t api_major = VK_API_VERSION_MAJOR(p.apiVersion);
-        uint32_t api_minor = VK_API_VERSION_MINOR(p.apiVersion);
-        uint32_t api_patch = VK_API_VERSION_PATCH(p.apiVersion);
-        uint32_t dv_major = VK_API_VERSION_MAJOR(p.driverVersion);
-        uint32_t dv_minor = VK_API_VERSION_MINOR(p.driverVersion);
-        uint32_t dv_patch = VK_API_VERSION_PATCH(p.driverVersion);
+        sb_appendf(sb, "\r\n--- GPU %u ---\r\n", g);
+        sb_appendf(sb, "deviceName    : %s\r\n", p.deviceName);
+        sb_appendf(sb, "deviceType    : %s\r\n", vk_device_type_str(p.deviceType));
+        sb_appendf(sb, "apiVersion    : %u.%u.%u (0x%08x)\r\n", VK_API_VERSION_MAJOR(p.apiVersion),
+                   VK_API_VERSION_MINOR(p.apiVersion), VK_API_VERSION_PATCH(p.apiVersion), p.apiVersion);
+        sb_appendf(sb, "driverVersion : %u.%u.%u (0x%08x raw)\r\n", VK_API_VERSION_MAJOR(p.driverVersion),
+                   VK_API_VERSION_MINOR(p.driverVersion), VK_API_VERSION_PATCH(p.driverVersion),
+                   p.driverVersion);
+        sb_appendf(sb, "vendorID      : 0x%04x\r\n", p.vendorID);
+        sb_appendf(sb, "deviceID      : 0x%04x\r\n", p.deviceID);
 
-        out("\n--- GPU %u ---\n", g);
-        out("deviceName    : %s\n", p.deviceName);
-        out("deviceType    : %s\n", vk_device_type_str(p.deviceType));
-        out("apiVersion    : %u.%u.%u (0x%08x)\n", api_major, api_minor, api_patch, p.apiVersion);
-        out("driverVersion : %u.%u.%u (0x%08x raw)\n", dv_major, dv_minor, dv_patch, p.driverVersion);
-        out("vendorID      : 0x%04x\n", p.vendorID);
-        out("deviceID      : 0x%04x\n", p.deviceID);
+        VkPhysicalDeviceFeatures feat;
+        vkGetPhysicalDeviceFeatures(gpus[g], &feat);
+        sb_appendf(sb, "Features:\r\n");
+#define AIO_F(name) sb_appendf(sb, "  %-28s: %s\r\n", #name, feat.name ? "yes" : "no")
+        AIO_F(robustBufferAccess);
+        AIO_F(fullDrawIndexUint32);
+        AIO_F(imageCubeArray);
+        AIO_F(geometryShader);
+        AIO_F(tessellationShader);
+        AIO_F(multiDrawIndirect);
+        AIO_F(multiViewport);
+        AIO_F(samplerAnisotropy);
+        AIO_F(textureCompressionETC2);
+        AIO_F(textureCompressionASTC_LDR);
+        AIO_F(textureCompressionBC);
+        AIO_F(shaderInt64);
+        AIO_F(shaderInt16);
+        AIO_F(sparseBinding);
+        AIO_F(fragmentStoresAndAtomics);
+#undef AIO_F
 
-        // Memory heaps.
         VkPhysicalDeviceMemoryProperties mem;
         vkGetPhysicalDeviceMemoryProperties(gpus[g], &mem);
-        out("memoryHeaps   : %u\n", mem.memoryHeapCount);
+        sb_appendf(sb, "memoryHeaps   : %u\r\n", mem.memoryHeapCount);
         for (uint32_t h = 0; h < mem.memoryHeapCount; h++) {
             double mb = (double)mem.memoryHeaps[h].size / (1024.0 * 1024.0);
-            int device_local = (mem.memoryHeaps[h].flags & VK_MEMORY_HEAP_DEVICE_LOCAL_BIT) ? 1 : 0;
-            out("  heap %u: %.0f MB%s\n", h, mb, device_local ? " (DEVICE_LOCAL)" : "");
+            int dl = (mem.memoryHeaps[h].flags & VK_MEMORY_HEAP_DEVICE_LOCAL_BIT) ? 1 : 0;
+            sb_appendf(sb, "  heap %u: %.0f MB%s\r\n", h, mb, dl ? " (DEVICE_LOCAL)" : "");
         }
-        out("memoryTypes   : %u\n", mem.memoryTypeCount);
 
-        // Queue families.
         uint32_t qf_count = 0;
         vkGetPhysicalDeviceQueueFamilyProperties(gpus[g], &qf_count, NULL);
         if (qf_count > 0) {
             VkQueueFamilyProperties *qf = malloc(sizeof(VkQueueFamilyProperties) * qf_count);
             if (qf) {
                 vkGetPhysicalDeviceQueueFamilyProperties(gpus[g], &qf_count, qf);
-                out("queueFamilies : %u\n", qf_count);
+                sb_appendf(sb, "queueFamilies : %u\r\n", qf_count);
                 for (uint32_t q = 0; q < qf_count; q++) {
                     VkQueueFlags f = qf[q].queueFlags;
-                    out("  family %u: count=%u%s%s%s%s\n", q, qf[q].queueCount,
-                        (f & VK_QUEUE_GRAPHICS_BIT) ? " GRAPHICS" : "",
-                        (f & VK_QUEUE_COMPUTE_BIT) ? " COMPUTE" : "",
-                        (f & VK_QUEUE_TRANSFER_BIT) ? " TRANSFER" : "",
-                        (f & VK_QUEUE_SPARSE_BINDING_BIT) ? " SPARSE" : "");
+                    sb_appendf(sb, "  family %u: count=%u%s%s%s%s\r\n", q, qf[q].queueCount,
+                               (f & VK_QUEUE_GRAPHICS_BIT) ? " GRAPHICS" : "",
+                               (f & VK_QUEUE_COMPUTE_BIT) ? " COMPUTE" : "",
+                               (f & VK_QUEUE_TRANSFER_BIT) ? " TRANSFER" : "",
+                               (f & VK_QUEUE_SPARSE_BINDING_BIT) ? " SPARSE" : "");
                 }
                 free(qf);
             }
         }
 
-        // Device extensions.
         uint32_t dev_ext_count = 0;
         vkEnumerateDeviceExtensionProperties(gpus[g], NULL, &dev_ext_count, NULL);
         if (dev_ext_count > 0) {
             VkExtensionProperties *de = malloc(sizeof(VkExtensionProperties) * dev_ext_count);
             if (de) {
                 vkEnumerateDeviceExtensionProperties(gpus[g], NULL, &dev_ext_count, de);
-                out("deviceExtensions (%u):\n", dev_ext_count);
-                for (uint32_t i = 0; i < dev_ext_count; i++) out("  %s\n", de[i].extensionName);
+                sb_appendf(sb, "deviceExtensions (%u):\r\n", dev_ext_count);
+                for (uint32_t i = 0; i < dev_ext_count; i++) sb_appendf(sb, "  %s\r\n", de[i].extensionName);
                 free(de);
             }
         }
@@ -239,27 +269,47 @@ static void report_vulkan(void) {
     vkDestroyInstance(inst, NULL);
 }
 
-// ----------------------------------------------------------------- entry point
+// ----------------------------------------------------------------- public API
+// OpenGL-only report (for the OpenGL tab). Caller frees.
+char *aio_gpuinfo_build_gl_text(void) {
+    StrBuf sb;
+    sb_init(&sb);
+    report_opengl(&sb);
+    return sb.buf;
+}
+
+// Vulkan-only report (for the Vulkan tab). Caller frees.
+char *aio_gpuinfo_build_vk_text(void) {
+    StrBuf sb;
+    sb_init(&sb);
+    report_vulkan(&sb);
+    return sb.buf;
+}
+
+char *aio_gpuinfo_build_text(void) {
+    StrBuf sb;
+    sb_init(&sb);
+    sb_appendf(&sb, "AIO Graphics Test - GPU info report\r\n");
+    sb_appendf(&sb, "(OpenGL + Vulkan adapter dump; replaces GPUInfo.exe)\r\n");
+    report_opengl(&sb);
+    report_vulkan(&sb);
+    return sb.buf;  // caller frees
+}
+
 int aio_run_gpuinfo(void) {
-    // Try to attach to a parent console so console output is visible when launched
-    // from a Wine/CMD console; otherwise the report file is the primary channel.
     if (AttachConsole(ATTACH_PARENT_PROCESS)) {
         freopen("CONOUT$", "w", stdout);
     }
-
-    g_report = fopen(AIO_REPORT_FILE, "w");
-
-    out("AIO Graphics Test - GPU info report\n");
-    out("(OpenGL + Vulkan adapter dump; replaces GPUInfo.exe)\n");
-
-    report_opengl();
-    report_vulkan();
-
-    out("\nReport written to %s\n", AIO_REPORT_FILE);
-
-    if (g_report) {
-        fclose(g_report);
-        g_report = NULL;
+    char *text = aio_gpuinfo_build_text();
+    if (text) {
+        FILE *f = fopen(AIO_REPORT_FILE, "w");
+        if (f) {
+            fputs(text, f);
+            fclose(f);
+        }
+        fputs(text, stdout);
+        printf("\nReport written to %s\n", AIO_REPORT_FILE);
+        free(text);
     }
     return 0;
 }

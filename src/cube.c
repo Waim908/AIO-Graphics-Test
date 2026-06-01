@@ -4253,28 +4253,28 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR pCmdLine,
         }
     }
 
-    // Primary interface: in-app menu. Pick a test, then dispatch.
-    if (!AIO_CLI_HAS("--no-menu")) {
-        int mode = aio_show_menu(hInstance);
-        if (mode == AIO_MODE_EXIT) {
-            AIO_FREE_ARGV();
-            return 0;
-        }
-        if (mode == AIO_MODE_GPUINFO) {
-            int rc = aio_run_gpuinfo();
-            AIO_FREE_ARGV();
-            return rc;
-        }
-        if (mode != AIO_MODE_CUBE_VK) {
-            // OpenGL / Direct3D backends + benchmark land in later versions.
+    // --cube <api> (and --no-menu) launch the standalone cube window directly.
+    // The shell uses this to open a cube in a separate process. Only Vulkan is
+    // implemented today; other APIs show a notice and exit.
+    int run_cube = AIO_CLI_HAS("--cube") || AIO_CLI_HAS("--no-menu");
+    if (run_cube) {
+        const char *api = "vk";
+        for (int iii = 0; iii < argc - 1; iii++)
+            if (argv && argv[iii] && strcmp(argv[iii], "--cube") == 0) api = argv[iii + 1];
+        if (strcmp(api, "vk") != 0) {
             MessageBoxA(NULL,
-                        "This mode is coming in a future version.\n\n"
-                        "Available now: Cube (Vulkan) and GPU Info.",
+                        "This graphics API backend is coming in a future version.\n\n"
+                        "Available now: Cube (Vulkan).",
                         "AIO Graphics Test", MB_OK | MB_ICONINFORMATION);
             AIO_FREE_ARGV();
             return 0;
         }
-        // AIO_MODE_CUBE_VK falls through to the Vulkan cube below.
+        // fall through to the Vulkan cube below
+    } else {
+        // Default: the app shell (persistent menu + in-frame GPU Info).
+        int rc = aio_run_shell(hInstance);
+        AIO_FREE_ARGV();
+        return rc;
     }
 
     demo_init(&demo, argc, argv);

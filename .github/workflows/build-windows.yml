@@ -57,7 +57,7 @@ jobs:
             -O2 -mwindows \
             -L vk/lib \
             -o AIO-Graphics-Test.exe \
-            -lvulkan-1 -lgdi32 -luser32 -lopengl32
+            -lvulkan-1 -lgdi32 -luser32 -lopengl32 -lcomctl32
           file AIO-Graphics-Test.exe
 
       - name: Upload artifact

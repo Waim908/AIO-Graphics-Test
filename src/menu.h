@@ -16,8 +16,9 @@ enum AioMode {
     AIO_MODE_BENCH
 };
 
-// Shows the two-level start menu and blocks until the user picks an option.
-// Returns the selected AioMode (AIO_MODE_EXIT if the window is closed).
-int aio_show_menu(HINSTANCE hInstance);
+// Runs the app shell: a persistent left sidebar (the menu, always visible) plus
+// a content pane on the right where each test opens in-frame. Blocks until the
+// window is closed. Returns a process exit code.
+int aio_run_shell(HINSTANCE hInstance);
 
 #endif  // AIO_MENU_H
