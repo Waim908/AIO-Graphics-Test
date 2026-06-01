@@ -57,7 +57,9 @@ with optional CLI shortcuts:
   FPS next to each row (full avg/min/max/1%-low in a popup + a per-frame **CSV**):
   - **Selectable length** — 15 / 30 / 45 / 60 s.
   - **Vsync toggle** — off (uncapped, for true throughput) or on.
-  - **Run All** — one tap sweeps every API/scene **sequentially** (no GPU contention).
+  - **Run All** — one tap sweeps every API/scene **sequentially and hands-free**: each
+    result popup auto-closes after 3 s so it proceeds without clicking (a single manual
+    benchmark keeps its popup until you dismiss it). No GPU contention between tests.
   - Results are **cached for the session**, so they stay visible when you switch views.
 - **Semaphore Probe** — benchmarks the instanced D3D11 cube with **timeline vs binary**
   semaphores to measure the Turnip-kgsl timeline-semaphore regression, and prints a plain
@@ -82,6 +84,7 @@ The menu is the primary interface, but every mode has a flag too:
 | `--cube dx11 --scene spin\|textured\|instanced\|tess\|compute\|dolphin` | Pick a DX11 scene |
 | `--bench <sec>` | Run the launched cube as a timed benchmark (avg/min/max/1%-low + CSV) |
 | `--vsync` | Present with vsync (default is uncapped) |
+| `--autoclose <sec>` | Auto-dismiss the benchmark result popup after N s (Run All uses 3) |
 | `--semaphore timeline\|binary` | Force the DXVK semaphore path (the probe uses this) |
 | `--no-menu` | Skip the shell and launch the cube directly |
 
