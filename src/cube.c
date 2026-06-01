@@ -68,6 +68,7 @@
 #include "cube_d3d11.h"  // AIO Graphics Test: Direct3D 11 (DXVK) cube backend
 #include "cube_d3d12.h"  // AIO Graphics Test: Direct3D 12 (VKD3D) cube backend
 #include "cube_d3d9.h"   // AIO Graphics Test: Direct3D 9 (DXVK) cube backend
+#include "cube_d3d8.h"   // AIO Graphics Test: Direct3D 8 (DXVK d3d8 wrapper) cube backend
 #endif
 #define MILLION 1000000L
 #define BILLION 1000000000L
@@ -4302,6 +4303,11 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR pCmdLine,
         }
         if (strcmp(api, "dx9") == 0) {
             int rc = aio_run_d3d9_cube(hInstance);
+            AIO_FREE_ARGV();
+            return rc;
+        }
+        if (strcmp(api, "dx8") == 0) {
+            int rc = aio_run_d3d8_cube(hInstance);
             AIO_FREE_ARGV();
             return rc;
         }

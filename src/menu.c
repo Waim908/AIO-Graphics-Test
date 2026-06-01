@@ -29,8 +29,9 @@ typedef struct {
 
 static SbItem g_items[] = {
     {"Cube  -  Vulkan", AIO_MODE_CUBE_VK},     {"Cube  -  OpenGL", AIO_MODE_CUBE_GL},
-    {"Cube  -  Direct3D 9", AIO_MODE_CUBE_DX9}, {"Cube  -  Direct3D 11", AIO_MODE_CUBE_DX11},
-    {"Cube  -  Direct3D 12", AIO_MODE_CUBE_DX12}, {"GPU Info", AIO_MODE_GPUINFO},
+    {"Cube  -  Direct3D 8", AIO_MODE_CUBE_DX8}, {"Cube  -  Direct3D 9", AIO_MODE_CUBE_DX9},
+    {"Cube  -  Direct3D 11", AIO_MODE_CUBE_DX11}, {"Cube  -  Direct3D 12", AIO_MODE_CUBE_DX12},
+    {"GPU Info", AIO_MODE_GPUINFO},
     {"Benchmark", AIO_MODE_BENCH},             {"Semaphore Probe", AIO_MODE_SEMAPHORE},
     {"Exit", AIO_MODE_EXIT},
 };
@@ -170,13 +171,14 @@ static void show_benchmark(HWND frame) {
     // each backend passes to aio_bench_finish (the DX11 ones = scene->label), so
     // the result file AIO-Graphics-Test_bench_<label>.txt is found.
     static const char *labels[] = {
-        "Vulkan",            "OpenGL",         "D3D9: Cube",     "D3D11: Cube",
-        "D3D11: Instanced",  "D3D11: Tessellate", "D3D11: Compute", "D3D11: Dolphin",
-        "D3D12: Cube",
+        "Vulkan",            "OpenGL",         "D3D8: Cube",     "D3D9: Cube",
+        "D3D11: Cube",       "D3D11: Instanced", "D3D11: Tessellate", "D3D11: Compute",
+        "D3D11: Dolphin",    "D3D12: Cube",
     };
     static const char *args[] = {
         "vk --bench 15",
         "gl --bench 15",
+        "dx8 --bench 15",
         "dx9 --bench 15",
         "dx11 --scene spin --bench 15",
         "dx11 --scene instanced --bench 15",
@@ -186,18 +188,18 @@ static void show_benchmark(HWND frame) {
         "dx12 --bench 15",
     };
     static const char *apilabels[] = {
-        "Vulkan",          "OpenGL",         "Direct3D 9",   "D3D11 Cube",
-        "D3D11 Instanced", "D3D11 Tessellation", "D3D11 Compute Particles", "D3D11 Dolphin",
-        "Direct3D 12",
+        "Vulkan",          "OpenGL",         "Direct3D 8",   "Direct3D 9",
+        "D3D11 Cube",      "D3D11 Instanced", "D3D11 Tessellation", "D3D11 Compute Particles",
+        "D3D11 Dolphin",   "Direct3D 12",
     };
     g_cbtn_n = (int)(sizeof(args) / sizeof(args[0]));
-    int y = cr.top + 64;
+    int y = cr.top + 58;
     for (int i = 0; i < g_cbtn_n; i++) {
         g_cbtn_arg[i] = args[i];
         g_cbtn_label[i] = apilabels[i];
         g_cbtn_proc[i] = NULL;
         g_cbtn[i] = CreateWindowA("BUTTON", labels[i], WS_CHILD | WS_VISIBLE | BS_PUSHBUTTON, cr.left,
-                                  y, 200, 30, frame, (HMENU)(INT_PTR)(ID_CB_FIRST + i), g_hinst, NULL);
+                                  y, 200, 28, frame, (HMENU)(INT_PTR)(ID_CB_FIRST + i), g_hinst, NULL);
         if (g_ui_font) SendMessage(g_cbtn[i], WM_SETFONT, (WPARAM)g_ui_font, TRUE);
         // Two labels right of the button (filled when the run finishes): a BOLD
         // "Avg N" then a normal "Min N   Max N".
@@ -208,7 +210,7 @@ static void show_benchmark(HWND frame) {
             CreateWindowA("STATIC", "", WS_CHILD | WS_VISIBLE | SS_LEFT, cr.left + 300, y + 6,
                           (cr.right - (cr.left + 300)), 24, frame, NULL, g_hinst, NULL);
         if (g_ui_font) SendMessage(g_cbtn_result[i], WM_SETFONT, (WPARAM)g_ui_font, TRUE);
-        y += 38;
+        y += 34;
     }
 }
 
@@ -413,6 +415,14 @@ static void on_select(HWND frame, int action) {
             if (h) CloseHandle(h);
             show_placeholder(frame, "Cube - Direct3D 9",
                              "Launched the Direct3D 9 cube in a new window (tests the DXVK d3d9 path).\n\n"
+                             "The menu stays here - switch back any time, or launch another test.");
+            break;
+        }
+        case AIO_MODE_CUBE_DX8: {
+            HANDLE h = launch_cube_window("dx8");
+            if (h) CloseHandle(h);
+            show_placeholder(frame, "Cube - Direct3D 8",
+                             "Launched the Direct3D 8 cube in a new window (DXVK d3d8 -> d3d9 path).\n\n"
                              "The menu stays here - switch back any time, or launch another test.");
             break;
         }
