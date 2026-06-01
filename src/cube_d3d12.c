@@ -14,6 +14,9 @@
 // Copyright (c) 2026 The412Banner. Licensed under Apache-2.0 (see LICENSE).
 
 #define COBJMACROS
+// mingw-w64 disables COBJMACROs for aggregate-return methods (e.g.
+// GetCPUDescriptorHandleForHeapStart) unless its inline C wrappers are enabled.
+#define WIDL_C_INLINE_WRAPPERS
 #ifndef WIN32_LEAN_AND_MEAN
 #define WIN32_LEAN_AND_MEAN
 #endif
