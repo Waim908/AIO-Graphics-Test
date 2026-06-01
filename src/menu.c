@@ -176,9 +176,11 @@ static void on_select(HWND frame, int action) {
                              "Available now: Cube (Vulkan) and GPU Info.");
             break;
         case AIO_MODE_BENCH:
+            launch_cube_window("vk --bench 15");
             show_placeholder(frame, "Benchmark",
-                             "Benchmark mode is coming in a future version\n"
-                             "(avg / min / max / 1% low FPS + CSV).");
+                             "Running a 15-second Vulkan benchmark in a new window.\n\n"
+                             "When it finishes, a summary pops up (avg / min / max / 1% low FPS)\n"
+                             "and the per-frame data is saved to AIO-Graphics-Test_bench.csv.");
             break;
         default:
             break;

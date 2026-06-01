@@ -1,0 +1,23 @@
+// AIO Graphics Test - benchmark instrumentation.
+// Collects per-frame times during a timed run, then reports avg / min / max /
+// 1%-low FPS and writes a CSV.
+#ifndef AIO_BENCH_H
+#define AIO_BENCH_H
+
+// Start a benchmark of the given duration (seconds). Allocates the sample store.
+void aio_bench_begin(int seconds);
+
+// Whether a benchmark is currently active.
+int aio_bench_active(void);
+
+// Requested benchmark duration in seconds.
+int aio_bench_seconds(void);
+
+// Record one rendered frame's time in milliseconds.
+void aio_bench_add(double frame_ms);
+
+// Finish: computes stats, writes AIO-Graphics-Test_bench.csv, and returns a
+// heap-allocated human-readable summary (caller frees). Ends the benchmark.
+char *aio_bench_finish(const char *api_label, double total_seconds);
+
+#endif  // AIO_BENCH_H

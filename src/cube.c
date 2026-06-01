@@ -62,6 +62,7 @@
 #if defined(VK_USE_PLATFORM_WIN32_KHR)
 #include "gpuinfo.h"  // AIO Graphics Test: --gpuinfo / --report mode
 #include "menu.h"     // AIO Graphics Test: in-app start menu
+#include "bench.h"    // AIO Graphics Test: --bench mode
 #endif
 #define MILLION 1000000L
 #define BILLION 1000000000L
@@ -4269,6 +4270,12 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR pCmdLine,
             AIO_FREE_ARGV();
             return 0;
         }
+        // Optional --bench <seconds>: run a timed benchmark, then report + exit.
+        for (int iii = 0; iii < argc - 1; iii++)
+            if (argv && argv[iii] && strcmp(argv[iii], "--bench") == 0) {
+                int sec = atoi(argv[iii + 1]);
+                if (sec > 0) aio_bench_begin(sec);
+            }
         // fall through to the Vulkan cube below
     } else {
         // Default: the app shell (persistent menu + in-frame GPU Info).
@@ -4305,6 +4312,16 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR pCmdLine,
     ULONGLONG aio_last_ms = GetTickCount64();
     uint64_t aio_last_frame = 0;
 
+    // AIO Graphics Test: benchmark sampling (high-res per-frame timing).
+    int aio_bench_on = aio_bench_active();
+    LARGE_INTEGER aio_qpf, aio_qpc_prev, aio_qpc_start;
+    uint64_t aio_bench_prev_frame = 0;
+    if (aio_bench_on) {
+        QueryPerformanceFrequency(&aio_qpf);
+        QueryPerformanceCounter(&aio_qpc_start);
+        aio_qpc_prev = aio_qpc_start;
+    }
+
     // main message loop
     while (!done) {
         if (demo.pause) {
@@ -4338,6 +4355,36 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR pCmdLine,
             SetWindowTextA(demo.window, aio_title);
             aio_last_ms = aio_now;
             aio_last_frame = cur;
+        }
+
+        // Benchmark: record each rendered frame's time; stop after the duration.
+        if (aio_bench_on) {
+            uint64_t bcur = (uint64_t)demo.curFrame;
+            if (bcur != aio_bench_prev_frame) {
+                LARGE_INTEGER now;
+                QueryPerformanceCounter(&now);
+                double dt_ms =
+                    (double)(now.QuadPart - aio_qpc_prev.QuadPart) * 1000.0 / (double)aio_qpf.QuadPart;
+                aio_bench_add(dt_ms);
+                aio_qpc_prev = now;
+                aio_bench_prev_frame = bcur;
+            }
+            LARGE_INTEGER now2;
+            QueryPerformanceCounter(&now2);
+            double elapsed = (double)(now2.QuadPart - aio_qpc_start.QuadPart) / (double)aio_qpf.QuadPart;
+            if (elapsed >= (double)aio_bench_seconds()) done = true;
+        }
+    }
+
+    // Benchmark: compute results, write CSV, show summary.
+    if (aio_bench_on) {
+        LARGE_INTEGER now3;
+        QueryPerformanceCounter(&now3);
+        double total = (double)(now3.QuadPart - aio_qpc_start.QuadPart) / (double)aio_qpf.QuadPart;
+        char *res = aio_bench_finish("Vulkan", total);
+        if (res) {
+            MessageBoxA(NULL, res, "AIO Graphics Test - Benchmark", MB_OK | MB_ICONINFORMATION);
+            free(res);
         }
     }
 
