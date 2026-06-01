@@ -4206,6 +4206,76 @@ static int aio_cli_has(int argc, char **argv, const char *flag) {
         }                                             \
     } while (0)
 
+// ----- AIO Graphics Test: in-window FPS/API HUD overlay -----
+// A small always-on-top, click-through bar painted over the cube's top-left
+// corner. Decoupled from the Vulkan present, so the text shows reliably.
+static HWND g_aio_hud;
+static char g_aio_hud_text[160];
+static HFONT g_aio_hud_font;
+
+static LRESULT CALLBACK aio_hud_proc(HWND h, UINT m, WPARAM w, LPARAM l) {
+    if (m == WM_PAINT) {
+        PAINTSTRUCT ps;
+        HDC dc = BeginPaint(h, &ps);
+        RECT rc;
+        GetClientRect(h, &rc);
+        HBRUSH bg = CreateSolidBrush(RGB(0, 0, 0));
+        FillRect(dc, &rc, bg);
+        DeleteObject(bg);
+        if (g_aio_hud_font) SelectObject(dc, g_aio_hud_font);
+        SetBkMode(dc, TRANSPARENT);
+        SetTextColor(dc, RGB(0, 255, 128));
+        RECT tr = rc;
+        tr.left += 8;
+        DrawTextA(dc, g_aio_hud_text, -1, &tr, DT_LEFT | DT_VCENTER | DT_SINGLELINE);
+        EndPaint(h, &ps);
+        return 0;
+    }
+    if (m == WM_NCHITTEST) return HTTRANSPARENT;  // click-through
+    return DefWindowProcA(h, m, w, l);
+}
+
+static void aio_hud_create(HINSTANCE hinst) {
+    static int reg = 0;
+    if (!reg) {
+        WNDCLASSA wc;
+        memset(&wc, 0, sizeof(wc));
+        wc.lpfnWndProc = aio_hud_proc;
+        wc.hInstance = hinst;
+        wc.lpszClassName = "AIOHudOverlay";
+        RegisterClassA(&wc);
+        reg = 1;
+    }
+    if (!g_aio_hud_font)
+        g_aio_hud_font = CreateFontA(20, 0, 0, 0, FW_BOLD, FALSE, FALSE, FALSE, DEFAULT_CHARSET,
+                                     OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, DEFAULT_QUALITY,
+                                     DEFAULT_PITCH | FF_SWISS, "Segoe UI");
+    g_aio_hud = CreateWindowExA(WS_EX_TOPMOST | WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE | WS_EX_TRANSPARENT,
+                                "AIOHudOverlay", "", WS_POPUP, 0, 0, 260, 32, NULL, NULL, hinst, NULL);
+}
+
+static void aio_hud_update(HWND cube, const char *text) {
+    if (!g_aio_hud) return;
+    strncpy(g_aio_hud_text, text, sizeof(g_aio_hud_text) - 1);
+    g_aio_hud_text[sizeof(g_aio_hud_text) - 1] = '\0';
+    POINT p = {8, 8};
+    ClientToScreen(cube, &p);
+    SetWindowPos(g_aio_hud, HWND_TOPMOST, p.x, p.y, 260, 32, SWP_NOACTIVATE | SWP_SHOWWINDOW);
+    InvalidateRect(g_aio_hud, NULL, TRUE);
+    UpdateWindow(g_aio_hud);
+}
+
+static void aio_hud_destroy(void) {
+    if (g_aio_hud) {
+        DestroyWindow(g_aio_hud);
+        g_aio_hud = NULL;
+    }
+    if (g_aio_hud_font) {
+        DeleteObject(g_aio_hud_font);
+        g_aio_hud_font = NULL;
+    }
+}
+
 int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR pCmdLine, int nCmdShow) {
     MSG msg;    // message
     bool done;  // flag saying when app is complete
@@ -4308,9 +4378,11 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR pCmdLine,
 
     done = false;  // initialize loop condition variable
 
-    // AIO Graphics Test: live FPS HUD in the title bar (API layer + current FPS).
+    // AIO Graphics Test: live FPS HUD (title bar + in-window overlay).
     ULONGLONG aio_last_ms = GetTickCount64();
     uint64_t aio_last_frame = 0;
+    aio_hud_create(hInstance);
+    aio_hud_update(demo.window, "Vulkan  -  measuring...");
 
     // AIO Graphics Test: benchmark sampling (high-res per-frame timing).
     int aio_bench_on = aio_bench_active();
@@ -4353,6 +4425,9 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR pCmdLine,
             char aio_title[128];
             snprintf(aio_title, sizeof(aio_title), "AIO Graphics Test  -  Vulkan  -  %.0f FPS", fps);
             SetWindowTextA(demo.window, aio_title);
+            char aio_hud[64];
+            snprintf(aio_hud, sizeof(aio_hud), "Vulkan   %.0f FPS", fps);
+            aio_hud_update(demo.window, aio_hud);
             aio_last_ms = aio_now;
             aio_last_frame = cur;
         }
@@ -4388,6 +4463,7 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR pCmdLine,
         }
     }
 
+    aio_hud_destroy();
     demo_cleanup(&demo);
 
     return (int)msg.wParam;
