@@ -67,6 +67,7 @@
 #include "cube_gl.h"     // AIO Graphics Test: OpenGL cube backend
 #include "cube_d3d11.h"  // AIO Graphics Test: Direct3D 11 (DXVK) cube backend
 #include "cube_d3d12.h"  // AIO Graphics Test: Direct3D 12 (VKD3D) cube backend
+#include "cube_d3d9.h"   // AIO Graphics Test: Direct3D 9 (DXVK) cube backend
 #endif
 #define MILLION 1000000L
 #define BILLION 1000000000L
@@ -4290,10 +4291,15 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR pCmdLine,
             AIO_FREE_ARGV();
             return rc;
         }
+        if (strcmp(api, "dx9") == 0) {
+            int rc = aio_run_d3d9_cube(hInstance);
+            AIO_FREE_ARGV();
+            return rc;
+        }
         if (strcmp(api, "vk") != 0) {
             MessageBoxA(NULL,
                         "This graphics API backend is coming in a future version.\n\n"
-                        "Available now: Cube (Vulkan/OpenGL/Direct3D 11/Direct3D 12).",
+                        "Available now: Cube (Vulkan/OpenGL/Direct3D 9/11/12).",
                         "AIO Graphics Test", MB_OK | MB_ICONINFORMATION);
             AIO_FREE_ARGV();
             return 0;

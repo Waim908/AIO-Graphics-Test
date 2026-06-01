@@ -50,7 +50,7 @@ static HWND g_edit_gl;   // GPU Info: OpenGL tab text
 static HWND g_placeholder;
 
 #define ID_CB_FIRST 3000  // content-area buttons (Benchmark + scene-picker views)
-#define MAX_CB 8
+#define MAX_CB 12
 static HWND g_cbtn[MAX_CB];
 static HWND g_cbtn_avg[MAX_CB];      // bold "Avg N" label next to each benchmark button
 static HWND g_cbtn_result[MAX_CB];   // "Min N   Max N" label next to each benchmark button
@@ -164,12 +164,14 @@ static void show_benchmark(HWND frame) {
     // each backend passes to aio_bench_finish (the DX11 ones = scene->label), so
     // the result file AIO-Graphics-Test_bench_<label>.txt is found.
     static const char *labels[] = {
-        "Vulkan",            "OpenGL",         "D3D11: Cube",    "D3D11: Instanced",
-        "D3D11: Tessellate", "D3D11: Compute", "D3D11: Dolphin", "D3D12: Cube",
+        "Vulkan",            "OpenGL",         "D3D9: Cube",     "D3D11: Cube",
+        "D3D11: Instanced",  "D3D11: Tessellate", "D3D11: Compute", "D3D11: Dolphin",
+        "D3D12: Cube",
     };
     static const char *args[] = {
         "vk --bench 15",
         "gl --bench 15",
+        "dx9 --bench 15",
         "dx11 --scene spin --bench 15",
         "dx11 --scene instanced --bench 15",
         "dx11 --scene tess --bench 15",
@@ -178,8 +180,9 @@ static void show_benchmark(HWND frame) {
         "dx12 --bench 15",
     };
     static const char *apilabels[] = {
-        "Vulkan",           "OpenGL",         "D3D11 Cube",    "D3D11 Instanced",
-        "D3D11 Tessellation", "D3D11 Compute Particles", "D3D11 Dolphin", "Direct3D 12",
+        "Vulkan",          "OpenGL",         "Direct3D 9",   "D3D11 Cube",
+        "D3D11 Instanced", "D3D11 Tessellation", "D3D11 Compute Particles", "D3D11 Dolphin",
+        "Direct3D 12",
     };
     g_cbtn_n = (int)(sizeof(args) / sizeof(args[0]));
     int y = cr.top + 64;
@@ -313,11 +316,14 @@ static void on_select(HWND frame, int action) {
                              "The menu stays here - switch back any time, or launch another test.");
             break;
         }
-        case AIO_MODE_CUBE_DX9:
-            show_placeholder(frame, "Cube",
-                             "This graphics API backend is coming in a future version.\n\n"
-                             "Available now: Cube (Vulkan / OpenGL / Direct3D 11 / Direct3D 12), and GPU Info.");
+        case AIO_MODE_CUBE_DX9: {
+            HANDLE h = launch_cube_window("dx9");
+            if (h) CloseHandle(h);
+            show_placeholder(frame, "Cube - Direct3D 9",
+                             "Launched the Direct3D 9 cube in a new window (tests the DXVK d3d9 path).\n\n"
+                             "The menu stays here - switch back any time, or launch another test.");
             break;
+        }
         case AIO_MODE_BENCH:
             show_benchmark(frame);
             break;

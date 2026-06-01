@@ -51,7 +51,7 @@ jobs:
 
       - name: Cross-compile AIO-Graphics-Test.exe
         run: |
-          x86_64-w64-mingw32-gcc src/cube.c src/gpuinfo.c src/menu.c src/bench.c src/hud.c src/cube_gl.c src/cube_d3d11.c src/cube_d3d12.c \
+          x86_64-w64-mingw32-gcc src/cube.c src/gpuinfo.c src/menu.c src/bench.c src/hud.c src/cube_gl.c src/cube_d3d11.c src/cube_d3d12.c src/cube_d3d9.c \
             -I src -I vk/include \
             -DVK_USE_PLATFORM_WIN32_KHR -DWIN32_LEAN_AND_MEAN \
             -O2 -mwindows \
