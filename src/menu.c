@@ -64,6 +64,7 @@ static int g_cb_bench;  // 1 = Benchmark view (poll + show result); 0 = launch-o
 static int g_is_probe;        // semaphore-probe view active (verdict logic)
 static float g_probe_avg[2];  // [0] = timeline avg FPS, [1] = binary avg FPS
 static HWND g_verdict;        // probe verdict label
+static HWND g_probe_ver;      // probe DXVK-version label (updated after a run)
 #define ID_RUN_ALL 3500
 static HWND g_run_all;        // "Run All" sweep button (Benchmark view)
 static int g_sweep_active;    // sequential run-all sweep in progress
@@ -84,6 +85,7 @@ static void destroy_content(void) {
     if (g_tab) { DestroyWindow(g_tab); g_tab = NULL; }
     if (g_placeholder) { DestroyWindow(g_placeholder); g_placeholder = NULL; }
     if (g_verdict) { DestroyWindow(g_verdict); g_verdict = NULL; }
+    if (g_probe_ver) { DestroyWindow(g_probe_ver); g_probe_ver = NULL; }
     if (g_run_all) { DestroyWindow(g_run_all); g_run_all = NULL; }
     g_is_probe = 0;
     g_sweep_active = 0;
@@ -265,6 +267,32 @@ static void show_dx11_scenes(HWND frame) {
     }
 }
 
+// Read the real DXVK version from a DXVK log (it logs "DXVK: vX" at startup).
+// Returns 1 and writes the version on success, 0 if no log/version found yet.
+static int read_dxvk_log_version(char *out, size_t n) {
+    static const char *names[] = {"AIO-Graphics-Test_d3d11.log", "d3d11.log", "dxvk.log",
+                                  "AIO-Graphics-Test_d3d9.log", "d3d9.log"};
+    for (size_t k = 0; k < sizeof(names) / sizeof(names[0]); k++) {
+        FILE *f = fopen(names[k], "r");
+        if (!f) continue;
+        char line[256];
+        while (fgets(line, sizeof(line), f)) {
+            char *p = strstr(line, "DXVK: ");
+            if (p) {
+                p += 6;
+                p[strcspn(p, "\r\n")] = '\0';
+                if (*p) {
+                    snprintf(out, n, "%s", p);
+                    fclose(f);
+                    return 1;
+                }
+            }
+        }
+        fclose(f);
+    }
+    return 0;
+}
+
 // Best-effort: read the loaded d3d11.dll (DXVK) product version. Writes
 // "not found" if d3d11.dll won't load, "unknown" if it has no version stamp.
 static void get_dxvk_version(char *out, size_t n) {
@@ -307,18 +335,30 @@ static void show_semaphore_probe(HWND frame) {
     RECT cr;
     get_content_rect(frame, &cr);
 
-    char dxvkver[64];
-    get_dxvk_version(dxvkver, sizeof(dxvkver));
-    char intro[512];
-    snprintf(intro, sizeof(intro),
-             "d3d11.dll reports version %s (DXVK spoofs the Windows version, not its own).\n\n"
-             "Benchmarks the instanced D3D11 cube (heavy DXVK load) twice: timeline vs\n"
-             "binary semaphores. On Turnip-kgsl the timeline path can serialize the finish\n"
-             "thread and roughly halve FPS. If the two runs differ below, your DXVK honors\n"
-             "DXVK_DISABLE_TIMELINE_SEMAPHORES - i.e. a binary-semaphore-capable build.",
-             dxvkver);
-    g_placeholder = CreateWindowA("STATIC", intro, WS_CHILD | WS_VISIBLE | SS_LEFT, cr.left, cr.top,
-                                  cr.right - cr.left, 104, frame, NULL, g_hinst, NULL);
+    // Version line: prefer the real DXVK version from its log; else note the
+    // DLL's spoofed Windows version and that a run will reveal the real one.
+    char verline[160], dxvkver[96];
+    if (read_dxvk_log_version(dxvkver, sizeof(dxvkver)))
+        snprintf(verline, sizeof(verline), "DXVK version: %s", dxvkver);
+    else {
+        get_dxvk_version(dxvkver, sizeof(dxvkver));
+        snprintf(verline, sizeof(verline),
+                 "DXVK version: (run a benchmark to detect; d3d11.dll reports %s - a spoofed "
+                 "Windows version)",
+                 dxvkver);
+    }
+    g_probe_ver = CreateWindowA("STATIC", verline, WS_CHILD | WS_VISIBLE | SS_LEFT, cr.left, cr.top,
+                                cr.right - cr.left, 22, frame, NULL, g_hinst, NULL);
+    if (g_ui_font_bold) SendMessage(g_probe_ver, WM_SETFONT, (WPARAM)g_ui_font_bold, TRUE);
+
+    g_placeholder = CreateWindowA(
+        "STATIC",
+        "Benchmarks the instanced D3D11 cube (heavy DXVK load) twice: timeline vs binary\n"
+        "semaphores. On Turnip-kgsl the timeline path can serialize the finish thread and\n"
+        "roughly halve FPS. If the two runs differ below, your DXVK honors\n"
+        "DXVK_DISABLE_TIMELINE_SEMAPHORES - i.e. a binary-semaphore-capable build.",
+        WS_CHILD | WS_VISIBLE | SS_LEFT, cr.left, cr.top + 26, cr.right - cr.left, 84, frame, NULL,
+        g_hinst, NULL);
     if (g_ui_font) SendMessage(g_placeholder, WM_SETFONT, (WPARAM)g_ui_font, TRUE);
 
     static const char *labels[] = {"Timeline semaphores (15s)", "Binary semaphores (15s)"};
@@ -558,6 +598,15 @@ static LRESULT CALLBACK shell_wndproc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM
                                 SetWindowTextA(g_verdict, vtxt);
                             }
                         }
+                        // A DXVK run just wrote its log; pull the real version.
+                        if (g_is_probe && g_probe_ver) {
+                            char dv[96];
+                            if (read_dxvk_log_version(dv, sizeof(dv))) {
+                                char vl[160];
+                                snprintf(vl, sizeof(vl), "DXVK version: %s", dv);
+                                SetWindowTextA(g_probe_ver, vl);
+                            }
+                        }
                     } else if (g_cbtn_result[i]) {
                         SetWindowTextA(g_cbtn_result[i], "(no result file)");
                     }
@@ -591,6 +640,13 @@ static LRESULT CALLBACK shell_wndproc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM
 
 int aio_run_shell(HINSTANCE hInstance) {
     g_hinst = hInstance;
+
+    // Force DXVK to log (info level) to the working dir, so child cube processes
+    // write their DXVK version into the log - the only place DXVK exposes it (the
+    // DLL itself reports a spoofed Windows version). Info level logs startup info
+    // only, not per-frame, so it doesn't affect benchmark FPS. Children inherit.
+    SetEnvironmentVariableA("DXVK_LOG_LEVEL", "info");
+    SetEnvironmentVariableA("DXVK_LOG_PATH", ".");
 
     INITCOMMONCONTROLSEX icc;
     icc.dwSize = sizeof(icc);
