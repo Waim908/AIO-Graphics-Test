@@ -299,11 +299,11 @@ static void show_semaphore_probe(HWND frame) {
     get_dxvk_version(dxvkver, sizeof(dxvkver));
     char intro[512];
     snprintf(intro, sizeof(intro),
-             "Loaded DXVK: %s\n\n"
-             "Benchmarks the instanced D3D11 cube (heavy DXVK load) twice: with timeline\n"
-             "vs binary semaphores. On Turnip-kgsl the timeline path can serialize the\n"
-             "finish thread and roughly halve FPS. The binary run only differs on a DXVK\n"
-             "build that honors DXVK_DISABLE_TIMELINE_SEMAPHORES.",
+             "d3d11.dll reports version %s (DXVK spoofs the Windows version, not its own).\n\n"
+             "Benchmarks the instanced D3D11 cube (heavy DXVK load) twice: timeline vs\n"
+             "binary semaphores. On Turnip-kgsl the timeline path can serialize the finish\n"
+             "thread and roughly halve FPS. If the two runs differ below, your DXVK honors\n"
+             "DXVK_DISABLE_TIMELINE_SEMAPHORES - i.e. a binary-semaphore-capable build.",
              dxvkver);
     g_placeholder = CreateWindowA("STATIC", intro, WS_CHILD | WS_VISIBLE | SS_LEFT, cr.left, cr.top,
                                   cr.right - cr.left, 104, frame, NULL, g_hinst, NULL);
