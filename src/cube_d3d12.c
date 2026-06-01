@@ -14,9 +14,6 @@
 // Copyright (c) 2026 The412Banner. Licensed under Apache-2.0 (see LICENSE).
 
 #define COBJMACROS
-// mingw-w64 disables COBJMACROs for aggregate-return methods (e.g.
-// GetCPUDescriptorHandleForHeapStart) unless its inline C wrappers are enabled.
-#define WIDL_C_INLINE_WRAPPERS
 #ifndef WIN32_LEAN_AND_MEAN
 #define WIN32_LEAN_AND_MEAN
 #endif
@@ -167,6 +164,13 @@ static void fail_box(const char *msg) {
     MessageBoxA(NULL, msg, "AIO Graphics Test - Direct3D 12", MB_OK | MB_ICONERROR);
 }
 
+// mingw-w64 gates the COBJMACRO for GetCPUDescriptorHandleForHeapStart behind
+// WIDL_C_INLINE_WRAPPERS (which mis-compiles on this toolchain), so call the
+// vtable directly - it's the value-return form on x86_64.
+static D3D12_CPU_DESCRIPTOR_HANDLE cpu_heap_start(ID3D12DescriptorHeap *h) {
+    return h->lpVtbl->GetCPUDescriptorHandleForHeapStart(h);
+}
+
 static D3D12_HEAP_PROPERTIES heap_props(D3D12_HEAP_TYPE type) {
     D3D12_HEAP_PROPERTIES hp;
     memset(&hp, 0, sizeof(hp));
@@ -282,8 +286,7 @@ int aio_run_d3d12_cube(HINSTANCE hinst) {
     ID3D12Device_CreateDescriptorHeap(dev, &hd, &IID_ID3D12DescriptorHeap, (void **)&dsvHeap);
     UINT rtvSize = ID3D12Device_GetDescriptorHandleIncrementSize(dev, D3D12_DESCRIPTOR_HEAP_TYPE_RTV);
 
-    D3D12_CPU_DESCRIPTOR_HANDLE rtvStart =
-        ID3D12DescriptorHeap_GetCPUDescriptorHandleForHeapStart(rtvHeap);
+    D3D12_CPU_DESCRIPTOR_HANDLE rtvStart = cpu_heap_start(rtvHeap);
     ID3D12Resource *rt[FRAME_COUNT];
     for (UINT i = 0; i < FRAME_COUNT; i++) {
         rt[i] = NULL;
@@ -316,8 +319,7 @@ int aio_run_d3d12_cube(HINSTANCE hinst) {
                                              D3D12_RESOURCE_STATE_DEPTH_WRITE, &cv,
                                              &IID_ID3D12Resource, (void **)&depth);
     }
-    D3D12_CPU_DESCRIPTOR_HANDLE dsvHandle =
-        ID3D12DescriptorHeap_GetCPUDescriptorHandleForHeapStart(dsvHeap);
+    D3D12_CPU_DESCRIPTOR_HANDLE dsvHandle = cpu_heap_start(dsvHeap);
     ID3D12Device_CreateDepthStencilView(dev, depth, NULL, dsvHandle);
 
     // Root signature: a single root CBV at b0.
