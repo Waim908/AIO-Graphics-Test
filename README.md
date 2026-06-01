@@ -1,6 +1,6 @@
 # AIO Graphics Test
 
-An all-in-one graphics **diagnostic + benchmark** tool for the **Winlato/Gamehub/GameNative** Wine
+An all-in-one graphics **diagnostic + benchmark** tool for the **Winlator/Gamehub/GameNative** Wine
 graphics stack on Android (DXVK, VKD3D-Proton, Turnip, Zink). One Windows `.exe` you drop
 into a container — it replaces `vkcube.exe`, `GPUInfo.exe`, and the whole `3d-tests` kit
 (DX8/9/11/12 + GL demos) with a single, touch-friendly, instrumented binary that renders
