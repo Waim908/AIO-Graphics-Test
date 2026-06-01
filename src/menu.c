@@ -104,6 +104,72 @@ static void destroy_content(void) {
     g_cbtn_n = 0;
 }
 
+// In-memory result cache (this session only; empty at launch, gone on close), so
+// already-run results reappear when you switch content views. Keyed by the test
+// label; NOT read from the on-disk files (those would leak last session's runs).
+#define MAX_CACHE 24
+static struct {
+    char label[40];
+    float avgF;
+    char avg[48];
+    char mm[96];
+    int used;
+} g_cache[MAX_CACHE];
+
+static int cache_find(const char *label) {
+    if (!label) return -1;
+    for (int i = 0; i < MAX_CACHE; i++)
+        if (g_cache[i].used && strcmp(g_cache[i].label, label) == 0) return i;
+    return -1;
+}
+
+static void cache_store(const char *label, float avgF, const char *avg, const char *mm) {
+    if (!label) return;
+    int i = cache_find(label);
+    if (i < 0)
+        for (i = 0; i < MAX_CACHE; i++)
+            if (!g_cache[i].used) break;
+    if (i >= MAX_CACHE) return;
+    g_cache[i].used = 1;
+    g_cache[i].avgF = avgF;
+    snprintf(g_cache[i].label, sizeof(g_cache[i].label), "%s", label);
+    snprintf(g_cache[i].avg, sizeof(g_cache[i].avg), "%s", avg);
+    snprintf(g_cache[i].mm, sizeof(g_cache[i].mm), "%s", mm);
+}
+
+// Build the timeline-vs-binary probe verdict text.
+static void probe_verdict(float tl, float bn, char *out, size_t n) {
+    float ratio = (tl > 0.0f) ? bn / tl : 0.0f;
+    if (ratio > 1.15f)
+        snprintf(out, n, "Timeline regression CONFIRMED: binary is %.2fx faster (%.0f vs %.0f FPS).",
+                 ratio, bn, tl);
+    else if (ratio > 0.0f && ratio < 0.87f)
+        snprintf(out, n, "Binary is slower (%.2fx) - timeline is better here (%.0f vs %.0f FPS).",
+                 ratio, bn, tl);
+    else
+        snprintf(out, n,
+                 "No significant difference (%.0f vs %.0f FPS) - this DXVK likely ignores the "
+                 "toggle, or isn't affected.",
+                 tl, bn);
+}
+
+// Repopulate any result-bearing rows in the current view from the cache (called
+// after a view builds its buttons). Generic: works for any future view too.
+static void restore_cached_results(void) {
+    for (int i = 0; i < g_cbtn_n; i++) {
+        int ci = cache_find(g_cbtn_label[i]);
+        if (ci < 0) continue;
+        if (g_cbtn_avg[i]) SetWindowTextA(g_cbtn_avg[i], g_cache[ci].avg);
+        if (g_cbtn_result[i]) SetWindowTextA(g_cbtn_result[i], g_cache[ci].mm);
+        if (g_is_probe && i < 2) g_probe_avg[i] = g_cache[ci].avgF;
+    }
+    if (g_is_probe && g_verdict && g_probe_avg[0] > 0.0f && g_probe_avg[1] > 0.0f) {
+        char v[160];
+        probe_verdict(g_probe_avg[0], g_probe_avg[1], v, sizeof(v));
+        SetWindowTextA(g_verdict, v);
+    }
+}
+
 static HWND make_report_edit(HWND frame, const RECT *r, const char *text) {
     HWND e = CreateWindowA("EDIT", "",
                            WS_CHILD | WS_VISIBLE | WS_VSCROLL | ES_MULTILINE | ES_READONLY,
@@ -226,6 +292,7 @@ static void show_benchmark(HWND frame) {
         if (g_ui_font) SendMessage(g_cbtn_result[i], WM_SETFONT, (WPARAM)g_ui_font, TRUE);
         y += 34;
     }
+    restore_cached_results();  // re-show results already run this session
 }
 
 // Direct3D 11 test-suite picker: each button launches one DX11 scene in a new
@@ -357,6 +424,7 @@ static void show_semaphore_probe(HWND frame) {
                               WS_CHILD | WS_VISIBLE | SS_LEFT, cr.left, y + 8,
                               cr.right - cr.left, 48, frame, NULL, g_hinst, NULL);
     if (g_ui_font_bold) SendMessage(g_verdict, WM_SETFONT, (WPARAM)g_ui_font_bold, TRUE);
+    restore_cached_results();  // re-show probe results already run this session
 }
 
 static void layout_content(HWND frame) {
@@ -542,6 +610,8 @@ static LRESULT CALLBACK shell_wndproc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM
                         }
                         if (g_cbtn_avg[i]) SetWindowTextA(g_cbtn_avg[i], avgtxt);
                         if (g_cbtn_result[i]) SetWindowTextA(g_cbtn_result[i], mmtxt);
+                        // Cache the result so it survives switching content views.
+                        if (a > 0.0f) cache_store(g_cbtn_label[i], a, avgtxt, mmtxt);
                         // Semaphore probe: record avg, and once both runs are in,
                         // judge the timeline-vs-binary result.
                         if (g_is_probe && i < 2 && a > 0.0f) {
@@ -549,20 +619,7 @@ static LRESULT CALLBACK shell_wndproc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM
                             float tl = g_probe_avg[0], bn = g_probe_avg[1];
                             if (tl > 0.0f && bn > 0.0f && g_verdict) {
                                 char vtxt[160];
-                                float ratio = bn / tl;
-                                if (ratio > 1.15f)
-                                    snprintf(vtxt, sizeof(vtxt),
-                                             "Timeline regression CONFIRMED: binary is %.2fx faster "
-                                             "(%.0f vs %.0f FPS).", ratio, bn, tl);
-                                else if (ratio < 0.87f)
-                                    snprintf(vtxt, sizeof(vtxt),
-                                             "Binary is slower (%.2fx) - timeline is better here "
-                                             "(%.0f vs %.0f FPS).", ratio, bn, tl);
-                                else
-                                    snprintf(vtxt, sizeof(vtxt),
-                                             "No significant difference (%.0f vs %.0f FPS) - this "
-                                             "DXVK likely ignores the toggle, or isn't affected.",
-                                             tl, bn);
+                                probe_verdict(tl, bn, vtxt, sizeof(vtxt));
                                 SetWindowTextA(g_verdict, vtxt);
                             }
                         }
