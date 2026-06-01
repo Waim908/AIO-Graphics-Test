@@ -564,7 +564,7 @@ int aio_run_d3d12_cube(HINSTANCE hinst) {
         double total = (double)(prev.QuadPart - start.QuadPart) / (double)qpf.QuadPart;
         char *res = aio_bench_finish(api, total);
         if (res) {
-            MessageBoxA(NULL, res, "AIO Graphics Test - Benchmark", MB_OK | MB_ICONINFORMATION);
+            aio_bench_show_result(res);
             free(res);
         }
     }

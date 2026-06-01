@@ -4286,6 +4286,10 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR pCmdLine,
             }
         // Optional --vsync: present with vsync (default is uncapped).
         if (AIO_CLI_HAS("--vsync")) aio_vsync = 1;
+        // Optional --autoclose <sec>: auto-dismiss the result popup (Run All sweep).
+        for (int iii = 0; iii < argc - 1; iii++)
+            if (argv && argv[iii] && strcmp(argv[iii], "--autoclose") == 0)
+                aio_autoclose_sec = atoi(argv[iii + 1]);
         if (strcmp(api, "gl") == 0) {
             int rc = aio_run_gl_cube(hInstance);
             AIO_FREE_ARGV();
@@ -4446,7 +4450,7 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR pCmdLine,
         double total = (double)(now3.QuadPart - aio_qpc_start.QuadPart) / (double)aio_qpf.QuadPart;
         char *res = aio_bench_finish(aio_api, total);
         if (res) {
-            MessageBoxA(NULL, res, "AIO Graphics Test - Benchmark", MB_OK | MB_ICONINFORMATION);
+            aio_bench_show_result(res);
             free(res);
         }
     }

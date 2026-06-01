@@ -1440,7 +1440,7 @@ int aio_run_d3d11_cube(HINSTANCE hinst, const char *scene_name) {
         // Keyed by the per-scene label so each DX11 scene gets its own result file.
         char *res = aio_bench_finish(api, total);
         if (res) {
-            MessageBoxA(NULL, res, "AIO Graphics Test - Benchmark", MB_OK | MB_ICONINFORMATION);
+            aio_bench_show_result(res);
             free(res);
         }
     }

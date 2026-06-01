@@ -451,9 +451,10 @@ static void launch_bench_row(HWND frame, int i) {
     if (i < 0 || i >= g_cbtn_n) return;
     if (g_cbtn_proc[i]) CloseHandle(g_cbtn_proc[i]);
     char arg[160];
-    if (g_bench_append)  // Benchmark view: append the chosen duration + vsync
-        snprintf(arg, sizeof(arg), "%s --bench %d%s", g_cbtn_arg[i], g_bench_secs,
-                 g_vsync_ui ? " --vsync" : "");
+    if (g_bench_append)  // Benchmark view: append the chosen duration + vsync,
+                         // and during a sweep auto-close the popup so it proceeds.
+        snprintf(arg, sizeof(arg), "%s --bench %d%s%s", g_cbtn_arg[i], g_bench_secs,
+                 g_vsync_ui ? " --vsync" : "", g_sweep_active ? " --autoclose 3" : "");
     else  // probe view: args already complete (--bench 15 --semaphore ...)
         snprintf(arg, sizeof(arg), "%s", g_cbtn_arg[i]);
     g_cbtn_proc[i] = launch_cube_window(arg);

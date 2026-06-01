@@ -6,6 +6,10 @@
 //
 // Copyright (c) 2026 The412Banner. Licensed under Apache-2.0 (see LICENSE).
 
+#define WIN32_LEAN_AND_MEAN
+#include <windows.h>
+
+#include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -13,6 +17,27 @@
 #include "bench.h"
 
 #define AIO_BENCH_CSV "AIO-Graphics-Test_bench.csv"
+#define AIO_BENCH_TITLE "AIO Graphics Test - Benchmark"
+
+int aio_autoclose_sec = 0;
+
+// Dismisses the result popup after aio_autoclose_sec seconds (finds it by title
+// and sends the OK command). No-op if the user already closed it.
+static DWORD WINAPI aio_box_closer(LPVOID p) {
+    Sleep((DWORD)(int)(INT_PTR)p * 1000u);
+    HWND h = FindWindowA(NULL, AIO_BENCH_TITLE);
+    if (h) PostMessageA(h, WM_COMMAND, MAKEWPARAM(IDOK, 0), 0);
+    return 0;
+}
+
+void aio_bench_show_result(const char *text) {
+    if (!text) return;
+    HANDLE th = NULL;
+    if (aio_autoclose_sec > 0)
+        th = CreateThread(NULL, 0, aio_box_closer, (LPVOID)(INT_PTR)aio_autoclose_sec, 0, NULL);
+    MessageBoxA(NULL, text, AIO_BENCH_TITLE, MB_OK | MB_ICONINFORMATION);
+    if (th) CloseHandle(th);
+}
 
 static double *g_ft;   // per-frame times (ms)
 static size_t g_n;     // sample count

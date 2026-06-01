@@ -8,6 +8,14 @@
 // 1 = present with vsync, 0 = uncapped. Read at swapchain/present time.
 extern int aio_vsync;
 
+// Auto-close the benchmark result popup after this many seconds (0 = wait for
+// the user). Set from --autoclose <sec>; the Run All sweep passes 3.
+extern int aio_autoclose_sec;
+
+// Show the benchmark result popup. Blocks until dismissed; if aio_autoclose_sec
+// > 0 it auto-dismisses after that many seconds so a sweep can proceed hands-free.
+void aio_bench_show_result(const char *text);
+
 // Start a benchmark of the given duration (seconds). Allocates the sample store.
 void aio_bench_begin(int seconds);
 
