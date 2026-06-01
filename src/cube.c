@@ -59,6 +59,9 @@
 
 #include "gettime.h"
 #include "inttypes.h"
+#if defined(VK_USE_PLATFORM_WIN32_KHR)
+#include "gpuinfo.h"  // AIO Graphics Test: --gpuinfo / --report mode
+#endif
 #define MILLION 1000000L
 #define BILLION 1000000000L
 
@@ -4221,6 +4224,20 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR pCmdLine,
         }
     } else {
         argv = NULL;
+    }
+
+    // AIO Graphics Test: --gpuinfo / --report mode dumps GL+VK adapter info and exits,
+    // without bringing up the cube/swapchain.
+    for (int iii = 0; iii < argc; iii++) {
+        if (argv && argv[iii] && (strcmp(argv[iii], "--gpuinfo") == 0 || strcmp(argv[iii], "--report") == 0)) {
+            int rc = aio_run_gpuinfo();
+            if (argv != NULL) {
+                for (int j = 0; j < argc; j++)
+                    if (argv[j] != NULL) free(argv[j]);
+                free(argv);
+            }
+            return rc;
+        }
     }
 
     demo_init(&demo, argc, argv);
