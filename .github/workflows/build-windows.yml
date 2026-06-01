@@ -1,4 +1,4 @@
-name: Build AIO-Cube (Windows PE)
+name: Build AIO-Graphics-Test (Windows PE)
 
 on:
   workflow_dispatch:
@@ -49,21 +49,21 @@ jobs:
           glslangValidator -V -x -o src/cube.vert.inc src/cube.vert
           glslangValidator -V -x -o src/cube.frag.inc src/cube.frag
 
-      - name: Cross-compile AIO-Cube.exe
+      - name: Cross-compile AIO-Graphics-Test.exe
         run: |
           x86_64-w64-mingw32-gcc src/cube.c \
             -I src -I vk/include \
             -DVK_USE_PLATFORM_WIN32_KHR -DWIN32_LEAN_AND_MEAN \
             -O2 -mwindows \
             -L vk/lib -L vk/bin \
-            -o AIO-Cube.exe \
+            -o AIO-Graphics-Test.exe \
             -lvulkan-1 -lgdi32 -luser32 -lopengl32
-          file AIO-Cube.exe
+          file AIO-Graphics-Test.exe
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
-          name: AIO-Cube-windows-x86_64
+          name: AIO-Graphics-Test-windows-x86_64
           path: |
-            AIO-Cube.exe
+            AIO-Graphics-Test.exe
             vk/bin/vulkan-1.dll

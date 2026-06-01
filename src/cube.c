@@ -63,7 +63,7 @@
 #define BILLION 1000000000L
 
 #define DEMO_TEXTURE_COUNT 1
-#define APP_SHORT_NAME "AIO-Cube"
+#define APP_SHORT_NAME "AIO Graphics Test"
 #define APP_LONG_NAME "Vulkan Cube"
 
 // Allow a maximum of two outstanding presentation operations.
