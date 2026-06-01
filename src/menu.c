@@ -64,6 +64,10 @@ static int g_cb_bench;  // 1 = Benchmark view (poll + show result); 0 = launch-o
 static int g_is_probe;        // semaphore-probe view active (verdict logic)
 static float g_probe_avg[2];  // [0] = timeline avg FPS, [1] = binary avg FPS
 static HWND g_verdict;        // probe verdict label
+#define ID_RUN_ALL 3500
+static HWND g_run_all;        // "Run All" sweep button (Benchmark view)
+static int g_sweep_active;    // sequential run-all sweep in progress
+static int g_sweep_idx;       // current row in the sweep
 
 static void get_content_rect(HWND frame, RECT *out) {
     RECT rc;
@@ -80,7 +84,9 @@ static void destroy_content(void) {
     if (g_tab) { DestroyWindow(g_tab); g_tab = NULL; }
     if (g_placeholder) { DestroyWindow(g_placeholder); g_placeholder = NULL; }
     if (g_verdict) { DestroyWindow(g_verdict); g_verdict = NULL; }
+    if (g_run_all) { DestroyWindow(g_run_all); g_run_all = NULL; }
     g_is_probe = 0;
+    g_sweep_active = 0;
     for (int i = 0; i < g_cbtn_n; i++) {
         if (g_cbtn[i]) DestroyWindow(g_cbtn[i]);
         g_cbtn[i] = NULL;
@@ -161,11 +167,17 @@ static void show_benchmark(HWND frame) {
 
     g_placeholder = CreateWindowA(
         "STATIC",
-        "Pick an API to benchmark (15 seconds). Results pop up (avg / min / max / 1% low FPS)\n"
-        "and per-frame data is saved to AIO-Graphics-Test_bench.csv.",
-        WS_CHILD | WS_VISIBLE | SS_LEFT, cr.left, cr.top, cr.right - cr.left, 56, frame, NULL, g_hinst,
-        NULL);
+        "Pick an API to benchmark (15 s each), or Run All to sweep them in sequence.\n"
+        "Per-frame data is saved to AIO-Graphics-Test_bench.csv.",
+        WS_CHILD | WS_VISIBLE | SS_LEFT, cr.left, cr.top, cr.right - cr.left - 200, 56, frame, NULL,
+        g_hinst, NULL);
     if (g_ui_font) SendMessage(g_placeholder, WM_SETFONT, (WPARAM)g_ui_font, TRUE);
+
+    // One-tap sequential sweep of every row.
+    g_run_all = CreateWindowA("BUTTON", "Run All  (sequential)", WS_CHILD | WS_VISIBLE | BS_PUSHBUTTON,
+                              cr.right - 190, cr.top, 190, 32, frame, (HMENU)(INT_PTR)ID_RUN_ALL,
+                              g_hinst, NULL);
+    if (g_ui_font) SendMessage(g_run_all, WM_SETFONT, (WPARAM)g_ui_font, TRUE);
 
     // Each row benchmarks one API/scene for 15s. apilabels MUST match the label
     // each backend passes to aio_bench_finish (the DX11 ones = scene->label), so
@@ -375,6 +387,16 @@ static HANDLE launch_cube_window(const char *api) {
     return NULL;
 }
 
+// Launch benchmark row i (in its own process) and start polling for its result.
+static void launch_bench_row(HWND frame, int i) {
+    if (i < 0 || i >= g_cbtn_n) return;
+    if (g_cbtn_proc[i]) CloseHandle(g_cbtn_proc[i]);
+    g_cbtn_proc[i] = launch_cube_window(g_cbtn_arg[i]);
+    if (g_cbtn_avg[i]) SetWindowTextA(g_cbtn_avg[i], "");
+    if (g_cbtn_result[i]) SetWindowTextA(g_cbtn_result[i], "running...");
+    SetTimer(frame, 1, 500, NULL);
+}
+
 static void on_select(HWND frame, int action) {
     switch (action) {
         case AIO_MODE_EXIT:
@@ -457,14 +479,17 @@ static LRESULT CALLBACK shell_wndproc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM
         }
         case WM_COMMAND: {
             int id = LOWORD(wParam);
+            if (id == ID_RUN_ALL && g_cb_bench && g_cbtn_n > 0) {  // sequential sweep
+                g_sweep_active = 1;
+                g_sweep_idx = 0;
+                launch_bench_row(hwnd, 0);
+                return 0;
+            }
             int cb = id - ID_CB_FIRST;
             if (cb >= 0 && cb < g_cbtn_n) {  // content-area buttons
-                if (g_cb_bench) {            // Benchmark view: poll for a result file
-                    if (g_cbtn_proc[cb]) CloseHandle(g_cbtn_proc[cb]);
-                    g_cbtn_proc[cb] = launch_cube_window(g_cbtn_arg[cb]);
-                    if (g_cbtn_avg[cb]) SetWindowTextA(g_cbtn_avg[cb], "");
-                    if (g_cbtn_result[cb]) SetWindowTextA(g_cbtn_result[cb], "running...");
-                    SetTimer(hwnd, 1, 500, NULL);
+                if (g_cb_bench) {            // Benchmark/probe view: poll for a result file
+                    g_sweep_active = 0;      // a manual click cancels any sweep
+                    launch_bench_row(hwnd, cb);
                 } else {  // Scene picker: fire-and-forget launch in a new window
                     HANDLE h = launch_cube_window(g_cbtn_arg[cb]);
                     if (h) CloseHandle(h);
@@ -535,6 +560,14 @@ static LRESULT CALLBACK shell_wndproc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM
                         }
                     } else if (g_cbtn_result[i]) {
                         SetWindowTextA(g_cbtn_result[i], "(no result file)");
+                    }
+                    // Run-All sweep: when the current row finishes, start the next.
+                    if (g_sweep_active && i == g_sweep_idx) {
+                        g_sweep_idx++;
+                        if (g_sweep_idx < g_cbtn_n)
+                            launch_bench_row(hwnd, g_sweep_idx);
+                        else
+                            g_sweep_active = 0;  // sweep complete
                     }
                 }
             }
