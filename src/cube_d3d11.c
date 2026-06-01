@@ -301,10 +301,12 @@ static void upload_mat(ID3D11DeviceContext *ctx, ID3D11Buffer *cbo, Mat4 m) {
 }
 
 static void spin_frame(ID3D11DeviceContext *ctx, double t, float aspect) {
-    float a = (float)t * 0.9f;
-    Mat4 model = mat_mul(mat_rotate(1, 1, 0, a), mat_rotate(0, 1, 0, a * 0.5f));
-    Mat4 mvp = mat_mul(mat_mul(model, mat_translate(0, 0, -5)),
-                       mat_perspective(0.7854f, aspect, 0.1f, 100.0f));
+    // Turntable: fixed forward tilt + slow spin about the vertical axis, narrow
+    // FOV + camera pulled back -> reads as the classic 3-faces-visible cube.
+    float a = (float)t * 0.6f;
+    Mat4 model = mat_mul(mat_rotate(0, 1, 0, a), mat_rotate(1, 0, 0, 0.5f));
+    Mat4 mvp = mat_mul(mat_mul(model, mat_translate(0, 0, -6.5f)),
+                       mat_perspective(0.6f, aspect, 0.1f, 100.0f));
     upload_mat(ctx, g_spin.cbo, mvp);
 
     UINT stride = sizeof(ColVertex), offset = 0;
@@ -446,10 +448,11 @@ static int tex_init(ID3D11Device *dev, ID3D11DeviceContext *ctx, int w, int h) {
 }
 
 static void tex_frame(ID3D11DeviceContext *ctx, double t, float aspect) {
-    float a = (float)t * 0.9f;
-    Mat4 model = mat_mul(mat_rotate(1, 1, 0, a), mat_rotate(0, 1, 0, a * 0.5f));
-    Mat4 mvp = mat_mul(mat_mul(model, mat_translate(0, 0, -5)),
-                       mat_perspective(0.7854f, aspect, 0.1f, 100.0f));
+    // Turntable view (see spin_frame) so the textured cube reads clearly as a cube.
+    float a = (float)t * 0.6f;
+    Mat4 model = mat_mul(mat_rotate(0, 1, 0, a), mat_rotate(1, 0, 0, 0.5f));
+    Mat4 mvp = mat_mul(mat_mul(model, mat_translate(0, 0, -6.5f)),
+                       mat_perspective(0.6f, aspect, 0.1f, 100.0f));
     upload_mat(ctx, g_tex.cbo, mvp);
 
     UINT stride = sizeof(TexVertex), offset = 0;
