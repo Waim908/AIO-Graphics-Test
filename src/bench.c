@@ -99,6 +99,18 @@ char *aio_bench_finish(const char *api_label, double total_seconds) {
         fclose(f);
     }
 
+    // Compact one-line result file (read by the shell's Benchmark view).
+    {
+        char rfn[160];
+        snprintf(rfn, sizeof(rfn), "AIO-Graphics-Test_bench_%s.txt", api_label);
+        FILE *rf = fopen(rfn, "w");
+        if (rf) {
+            fprintf(rf, "Avg %.0f   Min %.0f   Max %.0f   1%% low %.0f FPS   (%lu fr, %.0fs)", avg_fps,
+                    min_fps, max_fps, low1_fps, (unsigned long)g_n, total_seconds);
+            fclose(rf);
+        }
+    }
+
     char *summary = (char *)malloc(512);
     if (summary) {
         snprintf(summary, 512,

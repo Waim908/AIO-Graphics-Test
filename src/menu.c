@@ -50,7 +50,10 @@ static HWND g_placeholder;
 
 #define ID_CB_FIRST 3000  // content-area buttons (Benchmark view)
 static HWND g_cbtn[4];
+static HWND g_cbtn_result[4];   // result label next to each benchmark button
 static const char *g_cbtn_arg[4];
+static const char *g_cbtn_label[4];  // API label for the result file name
+static HANDLE g_cbtn_proc[4];   // running benchmark process (polled)
 static int g_cbtn_n;
 
 static void get_content_rect(HWND frame, RECT *out) {
@@ -70,6 +73,12 @@ static void destroy_content(void) {
     for (int i = 0; i < g_cbtn_n; i++) {
         if (g_cbtn[i]) DestroyWindow(g_cbtn[i]);
         g_cbtn[i] = NULL;
+        if (g_cbtn_result[i]) DestroyWindow(g_cbtn_result[i]);
+        g_cbtn_result[i] = NULL;
+        if (g_cbtn_proc[i]) {
+            CloseHandle(g_cbtn_proc[i]);
+            g_cbtn_proc[i] = NULL;
+        }
     }
     g_cbtn_n = 0;
 }
@@ -146,13 +155,21 @@ static void show_benchmark(HWND frame) {
 
     static const char *labels[] = {"Benchmark:  Vulkan  (15s)", "Benchmark:  OpenGL  (15s)"};
     static const char *args[] = {"vk --bench 15", "gl --bench 15"};
+    static const char *apilabels[] = {"Vulkan", "OpenGL"};
     g_cbtn_n = 2;
     int y = cr.top + 70;
     for (int i = 0; i < g_cbtn_n; i++) {
         g_cbtn_arg[i] = args[i];
+        g_cbtn_label[i] = apilabels[i];
+        g_cbtn_proc[i] = NULL;
         g_cbtn[i] = CreateWindowA("BUTTON", labels[i], WS_CHILD | WS_VISIBLE | BS_PUSHBUTTON, cr.left,
                                   y, 240, 34, frame, (HMENU)(INT_PTR)(ID_CB_FIRST + i), g_hinst, NULL);
         if (g_ui_font) SendMessage(g_cbtn[i], WM_SETFONT, (WPARAM)g_ui_font, TRUE);
+        // Result label to the right of the button (filled in when the run finishes).
+        g_cbtn_result[i] =
+            CreateWindowA("STATIC", "", WS_CHILD | WS_VISIBLE | SS_LEFT, cr.left + 252, y + 8,
+                          (cr.right - (cr.left + 252)), 26, frame, NULL, g_hinst, NULL);
+        if (g_ui_font) SendMessage(g_cbtn_result[i], WM_SETFONT, (WPARAM)g_ui_font, TRUE);
         y += 44;
     }
 }
@@ -174,7 +191,9 @@ static void layout_content(HWND frame) {
         MoveWindow(g_placeholder, cr.left, cr.top, cr.right - cr.left, cr.bottom - cr.top, TRUE);
 }
 
-static void launch_cube_window(const char *api) {
+// Launches a cube/benchmark in a new window. Returns the process handle (caller
+// closes it) or NULL on failure.
+static HANDLE launch_cube_window(const char *api) {
     char exe[MAX_PATH];
     GetModuleFileNameA(NULL, exe, MAX_PATH);
     char cmd[MAX_PATH + 40];
@@ -186,8 +205,9 @@ static void launch_cube_window(const char *api) {
     memset(&pi, 0, sizeof(pi));
     if (CreateProcessA(NULL, cmd, NULL, NULL, FALSE, 0, NULL, NULL, &si, &pi)) {
         CloseHandle(pi.hThread);
-        CloseHandle(pi.hProcess);
+        return pi.hProcess;
     }
+    return NULL;
 }
 
 static void on_select(HWND frame, int action) {
@@ -198,18 +218,22 @@ static void on_select(HWND frame, int action) {
         case AIO_MODE_GPUINFO:
             show_gpuinfo(frame);
             break;
-        case AIO_MODE_CUBE_VK:
-            launch_cube_window("vk");
+        case AIO_MODE_CUBE_VK: {
+            HANDLE h = launch_cube_window("vk");
+            if (h) CloseHandle(h);
             show_placeholder(frame, "Cube - Vulkan",
                              "Launched the Vulkan cube in a new window.\n\n"
                              "The menu stays here - switch back any time, or launch another test.");
             break;
-        case AIO_MODE_CUBE_GL:
-            launch_cube_window("gl");
+        }
+        case AIO_MODE_CUBE_GL: {
+            HANDLE h = launch_cube_window("gl");
+            if (h) CloseHandle(h);
             show_placeholder(frame, "Cube - OpenGL",
                              "Launched the OpenGL cube in a new window.\n\n"
                              "The menu stays here - switch back any time, or launch another test.");
             break;
+        }
         case AIO_MODE_CUBE_DX9:
         case AIO_MODE_CUBE_DX11:
         case AIO_MODE_CUBE_DX12:
@@ -247,7 +271,10 @@ static LRESULT CALLBACK shell_wndproc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM
             int id = LOWORD(wParam);
             int cb = id - ID_CB_FIRST;
             if (cb >= 0 && cb < g_cbtn_n) {  // Benchmark-view API buttons
-                launch_cube_window(g_cbtn_arg[cb]);
+                if (g_cbtn_proc[cb]) CloseHandle(g_cbtn_proc[cb]);
+                g_cbtn_proc[cb] = launch_cube_window(g_cbtn_arg[cb]);
+                if (g_cbtn_result[cb]) SetWindowTextA(g_cbtn_result[cb], "running...");
+                SetTimer(hwnd, 1, 500, NULL);
                 return 0;
             }
             int idx = id - ID_FIRST_BUTTON;
@@ -263,6 +290,27 @@ static LRESULT CALLBACK shell_wndproc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM
             }
             return 0;
         }
+        case WM_TIMER: {
+            // Poll running benchmark processes; when one exits, show its result.
+            for (int i = 0; i < g_cbtn_n; i++) {
+                if (g_cbtn_proc[i] && WaitForSingleObject(g_cbtn_proc[i], 0) == WAIT_OBJECT_0) {
+                    CloseHandle(g_cbtn_proc[i]);
+                    g_cbtn_proc[i] = NULL;
+                    char path[160], buf[256];
+                    snprintf(path, sizeof(path), "AIO-Graphics-Test_bench_%s.txt", g_cbtn_label[i]);
+                    FILE *f = fopen(path, "r");
+                    if (f) {
+                        size_t n = fread(buf, 1, sizeof(buf) - 1, f);
+                        buf[n] = '\0';
+                        fclose(f);
+                        if (g_cbtn_result[i]) SetWindowTextA(g_cbtn_result[i], buf);
+                    } else if (g_cbtn_result[i]) {
+                        SetWindowTextA(g_cbtn_result[i], "(no result file)");
+                    }
+                }
+            }
+            return 0;
+        }
         case WM_SIZE:
             layout_content(hwnd);
             return 0;
@@ -270,6 +318,7 @@ static LRESULT CALLBACK shell_wndproc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM
             DestroyWindow(hwnd);
             return 0;
         case WM_DESTROY:
+            KillTimer(hwnd, 1);
             PostQuitMessage(0);
             return 0;
         default:
@@ -286,7 +335,7 @@ int aio_run_shell(HINSTANCE hInstance) {
     icc.dwICC = ICC_TAB_CLASSES | ICC_STANDARD_CLASSES;
     InitCommonControlsEx(&icc);
 
-    g_ui_font = CreateFontA(14, 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE, DEFAULT_CHARSET,
+    g_ui_font = CreateFontA(15, 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE, DEFAULT_CHARSET,
                             OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, DEFAULT_QUALITY,
                             DEFAULT_PITCH | FF_SWISS, "Segoe UI");
     g_header_font = CreateFontA(18, 0, 0, 0, FW_BOLD, FALSE, FALSE, FALSE, DEFAULT_CHARSET,
