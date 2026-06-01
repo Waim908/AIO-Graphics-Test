@@ -39,6 +39,7 @@ static HINSTANCE g_hinst;
 static HWND g_header;
 static HWND g_sidebar[NITEMS];
 static HFONT g_ui_font;
+static HFONT g_ui_font_bold;
 static HFONT g_header_font;
 static HFONT g_mono_font;
 
@@ -51,7 +52,8 @@ static HWND g_placeholder;
 #define ID_CB_FIRST 3000  // content-area buttons (Benchmark + scene-picker views)
 #define MAX_CB 8
 static HWND g_cbtn[MAX_CB];
-static HWND g_cbtn_result[MAX_CB];   // result label next to each benchmark button
+static HWND g_cbtn_avg[MAX_CB];      // bold "Avg N" label next to each benchmark button
+static HWND g_cbtn_result[MAX_CB];   // "Min N   Max N" label next to each benchmark button
 static const char *g_cbtn_arg[MAX_CB];
 static const char *g_cbtn_label[MAX_CB];  // API label for the result file name
 static HANDLE g_cbtn_proc[MAX_CB];   // running benchmark process (polled)
@@ -75,6 +77,8 @@ static void destroy_content(void) {
     for (int i = 0; i < g_cbtn_n; i++) {
         if (g_cbtn[i]) DestroyWindow(g_cbtn[i]);
         g_cbtn[i] = NULL;
+        if (g_cbtn_avg[i]) DestroyWindow(g_cbtn_avg[i]);
+        g_cbtn_avg[i] = NULL;
         if (g_cbtn_result[i]) DestroyWindow(g_cbtn_result[i]);
         g_cbtn_result[i] = NULL;
         if (g_cbtn_proc[i]) {
@@ -185,10 +189,14 @@ static void show_benchmark(HWND frame) {
         g_cbtn[i] = CreateWindowA("BUTTON", labels[i], WS_CHILD | WS_VISIBLE | BS_PUSHBUTTON, cr.left,
                                   y, 200, 30, frame, (HMENU)(INT_PTR)(ID_CB_FIRST + i), g_hinst, NULL);
         if (g_ui_font) SendMessage(g_cbtn[i], WM_SETFONT, (WPARAM)g_ui_font, TRUE);
-        // Result label to the right of the button (filled in when the run finishes).
+        // Two labels right of the button (filled when the run finishes): a BOLD
+        // "Avg N" then a normal "Min N   Max N".
+        g_cbtn_avg[i] = CreateWindowA("STATIC", "", WS_CHILD | WS_VISIBLE | SS_LEFT, cr.left + 212,
+                                      y + 6, 86, 24, frame, NULL, g_hinst, NULL);
+        if (g_ui_font_bold) SendMessage(g_cbtn_avg[i], WM_SETFONT, (WPARAM)g_ui_font_bold, TRUE);
         g_cbtn_result[i] =
-            CreateWindowA("STATIC", "", WS_CHILD | WS_VISIBLE | SS_LEFT, cr.left + 212, y + 6,
-                          (cr.right - (cr.left + 212)), 24, frame, NULL, g_hinst, NULL);
+            CreateWindowA("STATIC", "", WS_CHILD | WS_VISIBLE | SS_LEFT, cr.left + 300, y + 6,
+                          (cr.right - (cr.left + 300)), 24, frame, NULL, g_hinst, NULL);
         if (g_ui_font) SendMessage(g_cbtn_result[i], WM_SETFONT, (WPARAM)g_ui_font, TRUE);
         y += 38;
     }
@@ -224,6 +232,7 @@ static void show_dx11_scenes(HWND frame) {
         g_cbtn_label[i] = NULL;
         g_cbtn_proc[i] = NULL;
         g_cbtn_result[i] = NULL;
+        g_cbtn_avg[i] = NULL;
         g_cbtn[i] = CreateWindowA("BUTTON", labels[i], WS_CHILD | WS_VISIBLE | BS_PUSHBUTTON,
                                   cr.left, y, 240, 34, frame, (HMENU)(INT_PTR)(ID_CB_FIRST + i),
                                   g_hinst, NULL);
@@ -334,6 +343,7 @@ static LRESULT CALLBACK shell_wndproc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM
                 if (g_cb_bench) {            // Benchmark view: poll for a result file
                     if (g_cbtn_proc[cb]) CloseHandle(g_cbtn_proc[cb]);
                     g_cbtn_proc[cb] = launch_cube_window(g_cbtn_arg[cb]);
+                    if (g_cbtn_avg[cb]) SetWindowTextA(g_cbtn_avg[cb], "");
                     if (g_cbtn_result[cb]) SetWindowTextA(g_cbtn_result[cb], "running...");
                     SetTimer(hwnd, 1, 500, NULL);
                 } else {  // Scene picker: fire-and-forget launch in a new window
@@ -368,7 +378,18 @@ static LRESULT CALLBACK shell_wndproc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM
                         size_t n = fread(buf, 1, sizeof(buf) - 1, f);
                         buf[n] = '\0';
                         fclose(f);
-                        if (g_cbtn_result[i]) SetWindowTextA(g_cbtn_result[i], buf);
+                        // File is "avg|min|max" FPS. Show bold "Avg N" + "Min N   Max N".
+                        float a = 0, mn = 0, mx = 0;
+                        char avgtxt[48], mmtxt[96];
+                        if (sscanf(buf, "%f|%f|%f", &a, &mn, &mx) == 3) {
+                            snprintf(avgtxt, sizeof(avgtxt), "Avg %.0f", a);
+                            snprintf(mmtxt, sizeof(mmtxt), "Min %.0f   Max %.0f", mn, mx);
+                        } else {
+                            avgtxt[0] = '\0';
+                            snprintf(mmtxt, sizeof(mmtxt), "%s", buf);
+                        }
+                        if (g_cbtn_avg[i]) SetWindowTextA(g_cbtn_avg[i], avgtxt);
+                        if (g_cbtn_result[i]) SetWindowTextA(g_cbtn_result[i], mmtxt);
                     } else if (g_cbtn_result[i]) {
                         SetWindowTextA(g_cbtn_result[i], "(no result file)");
                     }
@@ -403,6 +424,9 @@ int aio_run_shell(HINSTANCE hInstance) {
     g_ui_font = CreateFontA(15, 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE, DEFAULT_CHARSET,
                             OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, DEFAULT_QUALITY,
                             DEFAULT_PITCH | FF_SWISS, "Segoe UI");
+    g_ui_font_bold = CreateFontA(15, 0, 0, 0, FW_BOLD, FALSE, FALSE, FALSE, DEFAULT_CHARSET,
+                                 OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, DEFAULT_QUALITY,
+                                 DEFAULT_PITCH | FF_SWISS, "Segoe UI");
     g_header_font = CreateFontA(18, 0, 0, 0, FW_BOLD, FALSE, FALSE, FALSE, DEFAULT_CHARSET,
                                 OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, DEFAULT_QUALITY,
                                 DEFAULT_PITCH | FF_SWISS, "Segoe UI");
