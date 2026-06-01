@@ -167,13 +167,15 @@ static void fail_box(const char *msg) {
     MessageBoxA(NULL, msg, "AIO Graphics Test - Direct3D 12", MB_OK | MB_ICONERROR);
 }
 
-// mingw-w64 gates the COBJMACRO for GetCPUDescriptorHandleForHeapStart behind
-// WIDL_C_INLINE_WRAPPERS (which mis-compiles on this toolchain). Its vtable uses
-// the explicit-aggregate-return form (This, out*), so call that directly.
+// mingw models GetCPUDescriptorHandleForHeapStart's 8-byte-struct return as an
+// out-param, but the real (VKD3D/MS x64) ABI returns it in RAX - value-return.
+// Calling the mingw-typed vtable slot leaves our handle UNWRITTEN (garbage) and
+// crashes CreateRenderTargetView. Call through a correctly-typed value-return
+// pointer so we actually receive the handle.
 static D3D12_CPU_DESCRIPTOR_HANDLE cpu_heap_start(ID3D12DescriptorHeap *h) {
-    D3D12_CPU_DESCRIPTOR_HANDLE out;
-    h->lpVtbl->GetCPUDescriptorHandleForHeapStart(h, &out);
-    return out;
+    typedef D3D12_CPU_DESCRIPTOR_HANDLE(STDMETHODCALLTYPE * Fn)(ID3D12DescriptorHeap *);
+    Fn fn = (Fn)(void *)h->lpVtbl->GetCPUDescriptorHandleForHeapStart;
+    return fn(h);
 }
 
 static D3D12_HEAP_PROPERTIES heap_props(D3D12_HEAP_TYPE type) {
