@@ -32,6 +32,7 @@
 #include <string.h>
 
 #include "cube_d3d11.h"
+#include "dolphin_assets.h"  // embedded DolphinVS mesh/texture/caustic data
 #include "hud.h"
 #include "bench.h"
 
@@ -110,6 +111,32 @@ static Mat4 mat_rotate(float ax, float ay, float az, float angle_rad) {
     r.m[8] = az * ax * t + ay * s;
     r.m[9] = az * ay * t - ax * s;
     r.m[10] = c + az * az * t;
+    return r;
+}
+
+static Mat4 mat_scale(float s) {
+    Mat4 r = mat_identity();
+    r.m[0] = r.m[5] = r.m[10] = s;
+    return r;
+}
+
+// Right-handed look-at (row-vector world->view), matching the perspective below.
+static Mat4 mat_lookat(float ex, float ey, float ez, float ax, float ay, float az, float ux,
+                       float uy, float uz) {
+    float zx = ex - ax, zy = ey - ay, zz = ez - az;
+    float zl = sqrtf(zx * zx + zy * zy + zz * zz);
+    zx /= zl; zy /= zl; zz /= zl;
+    float xx = uy * zz - uz * zy, xy = uz * zx - ux * zz, xz = ux * zy - uy * zx;
+    float xl = sqrtf(xx * xx + xy * xy + xz * xz);
+    xx /= xl; xy /= xl; xz /= xl;
+    float yx = zy * xz - zz * xy, yy = zz * xx - zx * xz, yz = zx * xy - zy * xx;
+    Mat4 r = mat_identity();
+    r.m[0] = xx; r.m[1] = yx; r.m[2] = zx;
+    r.m[4] = xy; r.m[5] = yy; r.m[6] = zy;
+    r.m[8] = xz; r.m[9] = yz; r.m[10] = zz;
+    r.m[12] = -(xx * ex + xy * ey + xz * ez);
+    r.m[13] = -(yx * ex + yy * ey + yz * ez);
+    r.m[14] = -(zx * ex + zy * ey + zz * ez);
     return r;
 }
 
@@ -896,213 +923,306 @@ static void comp_cleanup(void) {
 }
 
 // ============================== DOLPHIN scene ===============================
-// A native homage to the classic DolphinVS sample: a procedurally generated
-// dolphin body (rings along a spine) that "swims" via a vertex-shader body wave,
-// lit with a simple Lambert term and animated caustic-style water modulation.
-// No licensed assets - the original mesh/caustic textures are reimplemented.
-#define DOL_RINGS 28
-#define DOL_SEGS 16
-#define DOL_BODY_V (DOL_RINGS * DOL_SEGS)
-#define DOL_EXTRA_V 7  // tail fluke (4) + dorsal fin (3)
-#define DOL_MAX_V (DOL_BODY_V + DOL_EXTRA_V)
-#define DOL_MAX_I ((DOL_RINGS - 1) * DOL_SEGS * 6 + 9)
+// The classic DolphinVS underwater scene, reproduced from the original Microsoft
+// DirectX SDK assets (embedded in dolphin_assets.h): the real 284-vertex dolphin
+// mesh tweened between its 3 keyframe poses (Dolphin1/2/3.x) for the swim, its
+// skin texture, the seafloor mesh + texture, and the 32-frame animated caustics,
+// with underwater fog. The 3-keyframe position+normal tween reproduces the
+// original DolphinTween.vsh technique.
+static const char *kDolBodyHLSL =
+    "cbuffer CB:register(b0){row_major float4x4 mvp;float4 weights;float4 lightdir;float4 fog;};\n"
+    "Texture2D dtex:register(t0); SamplerState smp:register(s0);\n"
+    "struct VSIn{float3 p0:POSITION0;float3 p1:POSITION1;float3 p2:POSITION2;"
+    "float3 n0:NORMAL0;float3 n1:NORMAL1;float3 n2:NORMAL2;float2 uv:TEXCOORD0;};\n"
+    "struct VSOut{float4 pos:SV_POSITION;float2 uv:TEXCOORD0;float3 nrm:NORMAL;float fog:FOG;};\n"
+    "VSOut VSMain(VSIn i){\n"
+    "  float3 p = i.p0*weights.x + i.p1*weights.y + i.p2*weights.z;\n"
+    "  float3 n = i.n0*weights.x + i.n1*weights.y + i.n2*weights.z;\n"
+    "  VSOut o; o.pos = mul(float4(p,1.0),mvp); o.uv=i.uv; o.nrm=n;\n"
+    "  o.fog = saturate((o.pos.w - fog.x)/(fog.y - fog.x)); return o; }\n"
+    "float4 PSMain(VSOut i):SV_TARGET{\n"
+    "  float3 N=normalize(i.nrm); float3 L=normalize(lightdir.xyz);\n"
+    "  float d = saturate(dot(N,L))*0.75 + 0.45;\n"
+    "  float3 c = dtex.Sample(smp,i.uv).rgb * d;\n"
+    "  c = lerp(c, float3(0.10,0.32,0.45), i.fog); return float4(c,1.0); }\n";
 
-static const char *kDolHLSL =
-    "cbuffer CB : register(b0) { row_major float4x4 mvp; float time; float3 pad; };\n"
-    "struct VSIn { float3 pos : POSITION; float3 nrm : NORMAL; };\n"
-    "struct VSOut { float4 pos : SV_POSITION; float3 nrm : NORMAL; float3 wp : TEXCOORD0; };\n"
-    "VSOut VSMain(VSIn i) {\n"
-    "  float3 p = i.pos;\n"
-    "  float env = saturate((2.0 - p.z) / 4.3); env = env*env;\n"
-    "  p.y += sin(p.z*1.6 - time*6.0) * 0.5 * env;\n"
-    "  VSOut o; o.pos = mul(float4(p,1.0), mvp); o.nrm = i.nrm; o.wp = p; return o; }\n"
-    "float4 PSMain(VSOut i) : SV_TARGET {\n"
-    "  float3 N = normalize(i.nrm); float3 L = normalize(float3(0.4,0.85,0.35));\n"
-    "  float diff = saturate(dot(N,L))*0.7 + 0.35;\n"
-    "  float belly = saturate(0.5 - i.wp.y*0.7);\n"
-    "  float3 base = lerp(float3(0.16,0.30,0.45), float3(0.80,0.85,0.90), belly);\n"
-    "  float caus = 0.85 + 0.15*sin(i.wp.x*3.0+time*2.0)*sin(i.wp.z*3.0 - time*1.5);\n"
-    "  return float4(base*diff*caus, 1.0); }\n";
-
-typedef struct {
-    float pos[3];
-    float nrm[3];
-} DolVertex;
+static const char *kSeaHLSL =
+    "cbuffer CB:register(b0){row_major float4x4 mvp;float4 weights;float4 lightdir;float4 fog;};\n"
+    "Texture2D stex:register(t0); Texture2DArray ctex:register(t1); SamplerState smp:register(s0);\n"
+    "struct VSIn{float3 pos:POSITION0;float3 nrm:NORMAL0;float2 uv:TEXCOORD0;};\n"
+    "struct VSOut{float4 pos:SV_POSITION;float2 uv:TEXCOORD0;float fog:FOG;};\n"
+    "VSOut VSMain(VSIn i){VSOut o; o.pos=mul(float4(i.pos,1.0),mvp); o.uv=i.uv;\n"
+    "  o.fog=saturate((o.pos.w - fog.x)/(fog.y - fog.x)); return o; }\n"
+    "float4 PSMain(VSOut i):SV_TARGET{\n"
+    "  float3 base = stex.Sample(smp,i.uv).rgb;\n"
+    "  float caus = ctex.Sample(smp, float3(i.uv*3.0, fog.z)).r;\n"
+    "  float3 c = base*(0.55 + caus*1.1);\n"
+    "  c = lerp(c, float3(0.10,0.32,0.45), i.fog); return float4(c,1.0); }\n";
 
 typedef struct {
     Mat4 mvp;
-    float time;
-    float pad[3];
-} DolCB;
+    float weights[4];
+    float light[4];
+    float fog[4];  // x=start y=end z=caust-frame w=time
+} DolSceneCB;
 
 static struct {
-    ID3D11VertexShader *vs;
-    ID3D11PixelShader *ps;
-    ID3D11InputLayout *layout;
-    ID3D11Buffer *vbo, *ibo, *cbo;
+    ID3D11VertexShader *dvs, *svs;
+    ID3D11PixelShader *dps, *sps;
+    ID3D11InputLayout *dlayout, *slayout;
+    ID3D11Buffer *dvbo, *dibo, *svbo, *sibo, *cbo;
+    ID3D11Texture2D *dtex, *stex, *ctex;
+    ID3D11ShaderResourceView *dsrv, *ssrv, *csrv;
+    ID3D11SamplerState *smp;
     ID3D11RasterizerState *rs;
-    UINT index_count;
 } g_dol;
 
-static void dol_set(DolVertex *v, float x, float y, float z, float nx, float ny, float nz) {
-    float l = sqrtf(nx * nx + ny * ny + nz * nz);
-    if (l < 1e-5f) l = 1.0f;
-    v->pos[0] = x;
-    v->pos[1] = y;
-    v->pos[2] = z;
-    v->nrm[0] = nx / l;
-    v->nrm[1] = ny / l;
-    v->nrm[2] = nz / l;
+static void dol_upload(ID3D11DeviceContext *ctx, const DolSceneCB *cb) {
+    D3D11_MAPPED_SUBRESOURCE map;
+    if (SUCCEEDED(ID3D11DeviceContext_Map(ctx, (ID3D11Resource *)g_dol.cbo, 0,
+                                          D3D11_MAP_WRITE_DISCARD, 0, &map))) {
+        memcpy(map.pData, cb, sizeof(*cb));
+        ID3D11DeviceContext_Unmap(ctx, (ID3D11Resource *)g_dol.cbo, 0);
+    }
 }
 
 static int dol_init(ID3D11Device *dev, ID3D11DeviceContext *ctx, int w, int h) {
     (void)ctx;
     (void)w;
     (void)h;
-    ID3DBlob *vsb = compile_hlsl(kDolHLSL, "VSMain", "vs_4_0");
-    ID3DBlob *psb = compile_hlsl(kDolHLSL, "PSMain", "ps_4_0");
-    if (!vsb || !psb) return 1;
-    ID3D11Device_CreateVertexShader(dev, ID3D10Blob_GetBufferPointer(vsb),
-                                    ID3D10Blob_GetBufferSize(vsb), NULL, &g_dol.vs);
-    ID3D11Device_CreatePixelShader(dev, ID3D10Blob_GetBufferPointer(psb),
-                                   ID3D10Blob_GetBufferSize(psb), NULL, &g_dol.ps);
-    D3D11_INPUT_ELEMENT_DESC il[] = {
+    ID3DBlob *dvb = compile_hlsl(kDolBodyHLSL, "VSMain", "vs_4_0");
+    ID3DBlob *dpb = compile_hlsl(kDolBodyHLSL, "PSMain", "ps_4_0");
+    ID3DBlob *svb = compile_hlsl(kSeaHLSL, "VSMain", "vs_4_0");
+    ID3DBlob *spb = compile_hlsl(kSeaHLSL, "PSMain", "ps_4_0");
+    if (!dvb || !dpb || !svb || !spb) return 1;
+    ID3D11Device_CreateVertexShader(dev, ID3D10Blob_GetBufferPointer(dvb),
+                                    ID3D10Blob_GetBufferSize(dvb), NULL, &g_dol.dvs);
+    ID3D11Device_CreatePixelShader(dev, ID3D10Blob_GetBufferPointer(dpb),
+                                   ID3D10Blob_GetBufferSize(dpb), NULL, &g_dol.dps);
+    ID3D11Device_CreateVertexShader(dev, ID3D10Blob_GetBufferPointer(svb),
+                                    ID3D10Blob_GetBufferSize(svb), NULL, &g_dol.svs);
+    ID3D11Device_CreatePixelShader(dev, ID3D10Blob_GetBufferPointer(spb),
+                                   ID3D10Blob_GetBufferSize(spb), NULL, &g_dol.sps);
+
+    D3D11_INPUT_ELEMENT_DESC dil[] = {
+        {"POSITION", 0, DXGI_FORMAT_R32G32B32_FLOAT, 0, 0, D3D11_INPUT_PER_VERTEX_DATA, 0},
+        {"POSITION", 1, DXGI_FORMAT_R32G32B32_FLOAT, 0, 12, D3D11_INPUT_PER_VERTEX_DATA, 0},
+        {"POSITION", 2, DXGI_FORMAT_R32G32B32_FLOAT, 0, 24, D3D11_INPUT_PER_VERTEX_DATA, 0},
+        {"NORMAL", 0, DXGI_FORMAT_R32G32B32_FLOAT, 0, 36, D3D11_INPUT_PER_VERTEX_DATA, 0},
+        {"NORMAL", 1, DXGI_FORMAT_R32G32B32_FLOAT, 0, 48, D3D11_INPUT_PER_VERTEX_DATA, 0},
+        {"NORMAL", 2, DXGI_FORMAT_R32G32B32_FLOAT, 0, 60, D3D11_INPUT_PER_VERTEX_DATA, 0},
+        {"TEXCOORD", 0, DXGI_FORMAT_R32G32_FLOAT, 0, 72, D3D11_INPUT_PER_VERTEX_DATA, 0},
+    };
+    ID3D11Device_CreateInputLayout(dev, dil, 7, ID3D10Blob_GetBufferPointer(dvb),
+                                   ID3D10Blob_GetBufferSize(dvb), &g_dol.dlayout);
+    D3D11_INPUT_ELEMENT_DESC sil[] = {
         {"POSITION", 0, DXGI_FORMAT_R32G32B32_FLOAT, 0, 0, D3D11_INPUT_PER_VERTEX_DATA, 0},
         {"NORMAL", 0, DXGI_FORMAT_R32G32B32_FLOAT, 0, 12, D3D11_INPUT_PER_VERTEX_DATA, 0},
+        {"TEXCOORD", 0, DXGI_FORMAT_R32G32_FLOAT, 0, 24, D3D11_INPUT_PER_VERTEX_DATA, 0},
     };
-    ID3D11Device_CreateInputLayout(dev, il, 2, ID3D10Blob_GetBufferPointer(vsb),
-                                   ID3D10Blob_GetBufferSize(vsb), &g_dol.layout);
-    ID3D10Blob_Release(vsb);
-    ID3D10Blob_Release(psb);
+    ID3D11Device_CreateInputLayout(dev, sil, 3, ID3D10Blob_GetBufferPointer(svb),
+                                   ID3D10Blob_GetBufferSize(svb), &g_dol.slayout);
+    ID3D10Blob_Release(dvb);
+    ID3D10Blob_Release(dpb);
+    ID3D10Blob_Release(svb);
+    ID3D10Blob_Release(spb);
 
-    DolVertex *V = (DolVertex *)malloc(sizeof(DolVertex) * DOL_MAX_V);
-    uint16_t *I = (uint16_t *)malloc(sizeof(uint16_t) * DOL_MAX_I);
-    if (!V || !I) {
-        free(V);
-        free(I);
-        return 1;
+    // Interleave dolphin vertex buffer: 3 positions + 3 normals + uv = 20 floats.
+    float *dv = (float *)malloc(sizeof(float) * 20 * DOLPHIN_NVERTS);
+    if (!dv) return 1;
+    for (int i = 0; i < DOLPHIN_NVERTS; i++) {
+        float *o = &dv[i * 20];
+        memcpy(o + 0, &dolphin_pos1[i * 3], 12);
+        memcpy(o + 3, &dolphin_pos2[i * 3], 12);
+        memcpy(o + 6, &dolphin_pos3[i * 3], 12);
+        memcpy(o + 9, &dolphin_nrm1[i * 3], 12);
+        memcpy(o + 12, &dolphin_nrm2[i * 3], 12);
+        memcpy(o + 15, &dolphin_nrm3[i * 3], 12);
+        memcpy(o + 18, &dolphin_uv[i * 2], 8);
     }
-    int nv = 0, ni = 0;
-    for (int i = 0; i < DOL_RINGS; i++) {
-        float s = (float)i / (float)(DOL_RINGS - 1);
-        float z = -2.2f + s * 4.2f;          // tail .. nose
-        float prof = sinf(PIF * s);          // 0..1..0
-        float rr = 0.5f * powf(prof, 0.6f);  // body radius
-        float rx = rr * 0.78f, ry = rr * 0.98f;
-        for (int j = 0; j < DOL_SEGS; j++) {
-            float ang = 2.0f * PIF * (float)j / (float)DOL_SEGS;
-            float cx = cosf(ang), sy = sinf(ang);
-            dol_set(&V[nv++], rx * cx, ry * sy, z, cx, sy, 0.0f);
-        }
+    D3D11_BUFFER_DESC bd;
+    D3D11_SUBRESOURCE_DATA sr;
+    memset(&bd, 0, sizeof(bd));
+    bd.Usage = D3D11_USAGE_IMMUTABLE;
+    bd.BindFlags = D3D11_BIND_VERTEX_BUFFER;
+    bd.ByteWidth = (UINT)(sizeof(float) * 20 * DOLPHIN_NVERTS);
+    memset(&sr, 0, sizeof(sr));
+    sr.pSysMem = dv;
+    ID3D11Device_CreateBuffer(dev, &bd, &sr, &g_dol.dvbo);
+    free(dv);
+
+    bd.BindFlags = D3D11_BIND_INDEX_BUFFER;
+    bd.ByteWidth = sizeof(dolphin_idx);
+    sr.pSysMem = dolphin_idx;
+    ID3D11Device_CreateBuffer(dev, &bd, &sr, &g_dol.dibo);
+
+    // Seafloor vertex buffer: pos + normal + uv = 8 floats.
+    float *sv = (float *)malloc(sizeof(float) * 8 * SEAFLOOR_NVERTS);
+    if (!sv) return 1;
+    for (int i = 0; i < SEAFLOOR_NVERTS; i++) {
+        float *o = &sv[i * 8];
+        memcpy(o + 0, &seafloor_pos[i * 3], 12);
+        memcpy(o + 3, &seafloor_nrm[i * 3], 12);
+        memcpy(o + 6, &seafloor_uv[i * 2], 8);
     }
-    for (int i = 0; i < DOL_RINGS - 1; i++)
-        for (int j = 0; j < DOL_SEGS; j++) {
-            int a = i * DOL_SEGS + j;
-            int b = i * DOL_SEGS + (j + 1) % DOL_SEGS;
-            int c = (i + 1) * DOL_SEGS + j;
-            int d = (i + 1) * DOL_SEGS + (j + 1) % DOL_SEGS;
-            I[ni++] = (uint16_t)a;
-            I[ni++] = (uint16_t)c;
-            I[ni++] = (uint16_t)b;
-            I[ni++] = (uint16_t)b;
-            I[ni++] = (uint16_t)c;
-            I[ni++] = (uint16_t)d;
-        }
-    // Tail fluke (horizontal), near z=-2.2.
-    int fb = nv;
-    dol_set(&V[nv++], 0.0f, 0.0f, -2.05f, 0, 1, 0);
-    dol_set(&V[nv++], -0.95f, 0.0f, -2.9f, 0, 1, 0);
-    dol_set(&V[nv++], 0.0f, 0.0f, -2.65f, 0, 1, 0);
-    dol_set(&V[nv++], 0.95f, 0.0f, -2.9f, 0, 1, 0);
-    I[ni++] = (uint16_t)fb;
-    I[ni++] = (uint16_t)(fb + 1);
-    I[ni++] = (uint16_t)(fb + 2);
-    I[ni++] = (uint16_t)fb;
-    I[ni++] = (uint16_t)(fb + 2);
-    I[ni++] = (uint16_t)(fb + 3);
-    // Dorsal fin (vertical), mid-body z~0.3.
-    int db = nv;
-    dol_set(&V[nv++], 0.0f, 0.42f, 0.45f, 0, 0, 1);
-    dol_set(&V[nv++], 0.0f, 0.42f, -0.15f, 0, 0, 1);
-    dol_set(&V[nv++], 0.0f, 1.05f, 0.10f, 0, 0, 1);
-    I[ni++] = (uint16_t)db;
-    I[ni++] = (uint16_t)(db + 1);
-    I[ni++] = (uint16_t)(db + 2);
-    g_dol.index_count = (UINT)ni;
+    bd.BindFlags = D3D11_BIND_VERTEX_BUFFER;
+    bd.ByteWidth = (UINT)(sizeof(float) * 8 * SEAFLOOR_NVERTS);
+    sr.pSysMem = sv;
+    ID3D11Device_CreateBuffer(dev, &bd, &sr, &g_dol.svbo);
+    free(sv);
 
-    D3D11_BUFFER_DESC vbd;
-    memset(&vbd, 0, sizeof(vbd));
-    vbd.ByteWidth = (UINT)(sizeof(DolVertex) * nv);
-    vbd.Usage = D3D11_USAGE_IMMUTABLE;
-    vbd.BindFlags = D3D11_BIND_VERTEX_BUFFER;
-    D3D11_SUBRESOURCE_DATA vsr;
-    memset(&vsr, 0, sizeof(vsr));
-    vsr.pSysMem = V;
-    ID3D11Device_CreateBuffer(dev, &vbd, &vsr, &g_dol.vbo);
+    bd.BindFlags = D3D11_BIND_INDEX_BUFFER;
+    bd.ByteWidth = sizeof(seafloor_idx);
+    sr.pSysMem = seafloor_idx;
+    ID3D11Device_CreateBuffer(dev, &bd, &sr, &g_dol.sibo);
 
-    D3D11_BUFFER_DESC ibd;
-    memset(&ibd, 0, sizeof(ibd));
-    ibd.ByteWidth = (UINT)(sizeof(uint16_t) * ni);
-    ibd.Usage = D3D11_USAGE_IMMUTABLE;
-    ibd.BindFlags = D3D11_BIND_INDEX_BUFFER;
-    D3D11_SUBRESOURCE_DATA isr;
-    memset(&isr, 0, sizeof(isr));
-    isr.pSysMem = I;
-    ID3D11Device_CreateBuffer(dev, &ibd, &isr, &g_dol.ibo);
-    free(V);
-    free(I);
+    // Constant buffer.
+    memset(&bd, 0, sizeof(bd));
+    bd.Usage = D3D11_USAGE_DYNAMIC;
+    bd.BindFlags = D3D11_BIND_CONSTANT_BUFFER;
+    bd.CPUAccessFlags = D3D11_CPU_ACCESS_WRITE;
+    bd.ByteWidth = sizeof(DolSceneCB);
+    ID3D11Device_CreateBuffer(dev, &bd, NULL, &g_dol.cbo);
 
-    D3D11_BUFFER_DESC cbd;
-    memset(&cbd, 0, sizeof(cbd));
-    cbd.ByteWidth = sizeof(DolCB);
-    cbd.Usage = D3D11_USAGE_DYNAMIC;
-    cbd.BindFlags = D3D11_BIND_CONSTANT_BUFFER;
-    cbd.CPUAccessFlags = D3D11_CPU_ACCESS_WRITE;
-    ID3D11Device_CreateBuffer(dev, &cbd, NULL, &g_dol.cbo);
+    // Dolphin + seafloor textures (RGBA8).
+    D3D11_TEXTURE2D_DESC td;
+    D3D11_SUBRESOURCE_DATA tsr;
+    memset(&td, 0, sizeof(td));
+    td.MipLevels = 1;
+    td.ArraySize = 1;
+    td.Format = DXGI_FORMAT_R8G8B8A8_UNORM;
+    td.SampleDesc.Count = 1;
+    td.Usage = D3D11_USAGE_IMMUTABLE;
+    td.BindFlags = D3D11_BIND_SHADER_RESOURCE;
+    td.Width = DOLTEX_W;
+    td.Height = DOLTEX_H;
+    memset(&tsr, 0, sizeof(tsr));
+    tsr.pSysMem = dolphin_tex;
+    tsr.SysMemPitch = DOLTEX_W * 4;
+    ID3D11Device_CreateTexture2D(dev, &td, &tsr, &g_dol.dtex);
+    ID3D11Device_CreateShaderResourceView(dev, (ID3D11Resource *)g_dol.dtex, NULL, &g_dol.dsrv);
+    td.Width = SEATEX_W;
+    td.Height = SEATEX_H;
+    tsr.pSysMem = seafloor_tex;
+    tsr.SysMemPitch = SEATEX_W * 4;
+    ID3D11Device_CreateTexture2D(dev, &td, &tsr, &g_dol.stex);
+    ID3D11Device_CreateShaderResourceView(dev, (ID3D11Resource *)g_dol.stex, NULL, &g_dol.ssrv);
 
-    // No back-face culling (procedural mesh winding isn't guaranteed consistent).
+    // Caustic texture array: 32 single-channel (R8) frames.
+    D3D11_TEXTURE2D_DESC cd;
+    memset(&cd, 0, sizeof(cd));
+    cd.Width = CAUST_W;
+    cd.Height = CAUST_H;
+    cd.MipLevels = 1;
+    cd.ArraySize = CAUST_FRAMES;
+    cd.Format = DXGI_FORMAT_R8_UNORM;
+    cd.SampleDesc.Count = 1;
+    cd.Usage = D3D11_USAGE_IMMUTABLE;
+    cd.BindFlags = D3D11_BIND_SHADER_RESOURCE;
+    D3D11_SUBRESOURCE_DATA csr[CAUST_FRAMES];
+    for (int i = 0; i < CAUST_FRAMES; i++) {
+        csr[i].pSysMem = &caust_tex[i * CAUST_W * CAUST_H];
+        csr[i].SysMemPitch = CAUST_W;
+        csr[i].SysMemSlicePitch = 0;
+    }
+    ID3D11Device_CreateTexture2D(dev, &cd, csr, &g_dol.ctex);
+    D3D11_SHADER_RESOURCE_VIEW_DESC cv;
+    memset(&cv, 0, sizeof(cv));
+    cv.Format = DXGI_FORMAT_R8_UNORM;
+    cv.ViewDimension = D3D11_SRV_DIMENSION_TEXTURE2DARRAY;
+    cv.Texture2DArray.MipLevels = 1;
+    cv.Texture2DArray.ArraySize = CAUST_FRAMES;
+    ID3D11Device_CreateShaderResourceView(dev, (ID3D11Resource *)g_dol.ctex, &cv, &g_dol.csrv);
+
+    D3D11_SAMPLER_DESC sd;
+    memset(&sd, 0, sizeof(sd));
+    sd.Filter = D3D11_FILTER_MIN_MAG_MIP_LINEAR;
+    sd.AddressU = sd.AddressV = sd.AddressW = D3D11_TEXTURE_ADDRESS_WRAP;
+    sd.MaxLOD = D3D11_FLOAT32_MAX;
+    ID3D11Device_CreateSamplerState(dev, &sd, &g_dol.smp);
+
     D3D11_RASTERIZER_DESC rd;
     memset(&rd, 0, sizeof(rd));
     rd.FillMode = D3D11_FILL_SOLID;
-    rd.CullMode = D3D11_CULL_NONE;
+    rd.CullMode = D3D11_CULL_NONE;  // mesh winding not guaranteed; show both sides
     rd.DepthClipEnable = TRUE;
     ID3D11Device_CreateRasterizerState(dev, &rd, &g_dol.rs);
-    return 0;
+    return (g_dol.dsrv && g_dol.ssrv && g_dol.csrv) ? 0 : 1;
 }
 
 static void dol_frame(ID3D11DeviceContext *ctx, double t, float aspect) {
-    DolCB cb;
-    Mat4 world = mat_mul(mat_rotate(0, 1, 0, (float)t * 0.35f), mat_rotate(1, 0, 0, 0.15f));
-    cb.mvp = mat_mul(mat_mul(world, mat_translate(0, 0, -6.5f)),
-                     mat_perspective(0.7854f, aspect, 0.1f, 100.0f));
-    cb.time = (float)t;
+    // Orbiting camera (object fixed in world -> lighting stays put).
+    float ang = (float)t * 0.3f, R = 7.0f;
+    Mat4 view = mat_lookat(R * sinf(ang), 2.0f, R * cosf(ang), 0.0f, -0.4f, 0.0f, 0, 1, 0);
+    Mat4 vp = mat_mul(view, mat_perspective(0.85f, aspect, 0.1f, 100.0f));
 
-    D3D11_MAPPED_SUBRESOURCE map;
-    if (SUCCEEDED(ID3D11DeviceContext_Map(ctx, (ID3D11Resource *)g_dol.cbo, 0,
-                                          D3D11_MAP_WRITE_DISCARD, 0, &map))) {
-        memcpy(map.pData, &cb, sizeof(cb));
-        ID3D11DeviceContext_Unmap(ctx, (ID3D11Resource *)g_dol.cbo, 0);
-    }
-    UINT stride = sizeof(DolVertex), offset = 0;
+    DolSceneCB cb;
+    cb.light[0] = 0.3f; cb.light[1] = 1.0f; cb.light[2] = 0.4f; cb.light[3] = 0.0f;
+    cb.fog[0] = 6.0f; cb.fog[1] = 16.0f;
+    cb.fog[2] = (float)(((int)(t * 15.0)) % CAUST_FRAMES);
+    cb.fog[3] = (float)t;
+
     ID3D11DeviceContext_RSSetState(ctx, g_dol.rs);
-    ID3D11DeviceContext_IASetInputLayout(ctx, g_dol.layout);
-    ID3D11DeviceContext_IASetVertexBuffers(ctx, 0, 1, &g_dol.vbo, &stride, &offset);
-    ID3D11DeviceContext_IASetIndexBuffer(ctx, g_dol.ibo, DXGI_FORMAT_R16_UINT, 0);
     ID3D11DeviceContext_IASetPrimitiveTopology(ctx, D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
-    ID3D11DeviceContext_VSSetShader(ctx, g_dol.vs, NULL, 0);
+
+    // --- Seafloor ---
+    Mat4 m_sea = mat_mul(mat_scale(0.04f), mat_translate(0.0f, -2.5f, 0.0f));
+    cb.mvp = mat_mul(m_sea, vp);
+    cb.weights[0] = cb.weights[1] = cb.weights[2] = cb.weights[3] = 0.0f;
+    dol_upload(ctx, &cb);
+    UINT ss = sizeof(float) * 8, so = 0;
+    ID3D11DeviceContext_IASetInputLayout(ctx, g_dol.slayout);
+    ID3D11DeviceContext_IASetVertexBuffers(ctx, 0, 1, &g_dol.svbo, &ss, &so);
+    ID3D11DeviceContext_IASetIndexBuffer(ctx, g_dol.sibo, DXGI_FORMAT_R16_UINT, 0);
+    ID3D11DeviceContext_VSSetShader(ctx, g_dol.svs, NULL, 0);
     ID3D11DeviceContext_VSSetConstantBuffers(ctx, 0, 1, &g_dol.cbo);
-    ID3D11DeviceContext_PSSetShader(ctx, g_dol.ps, NULL, 0);
-    ID3D11DeviceContext_DrawIndexed(ctx, g_dol.index_count, 0, 0);
+    ID3D11DeviceContext_PSSetShader(ctx, g_dol.sps, NULL, 0);
+    ID3D11DeviceContext_PSSetConstantBuffers(ctx, 0, 1, &g_dol.cbo);
+    ID3D11DeviceContext_PSSetSamplers(ctx, 0, 1, &g_dol.smp);
+    ID3D11ShaderResourceView *seasrv[2] = {g_dol.ssrv, g_dol.csrv};
+    ID3D11DeviceContext_PSSetShaderResources(ctx, 0, 2, seasrv);
+    ID3D11DeviceContext_DrawIndexed(ctx, SEAFLOOR_NINDICES, 0, 0);
+
+    // --- Dolphin (3-keyframe swim tween) ---
+    Mat4 m_dol = mat_mul(mat_scale(0.01f), mat_translate(-0.25f, 0.27f, 0.0f));
+    cb.mvp = mat_mul(m_dol, vp);
+    float phase = fmodf((float)t * 1.6f, 3.0f);
+    int seg = (int)phase;
+    float frac = phase - (float)seg;
+    cb.weights[0] = cb.weights[1] = cb.weights[2] = 0.0f;
+    cb.weights[seg] = 1.0f - frac;
+    cb.weights[(seg + 1) % 3] = frac;
+    dol_upload(ctx, &cb);
+    UINT ds = sizeof(float) * 20, dofs = 0;
+    ID3D11DeviceContext_IASetInputLayout(ctx, g_dol.dlayout);
+    ID3D11DeviceContext_IASetVertexBuffers(ctx, 0, 1, &g_dol.dvbo, &ds, &dofs);
+    ID3D11DeviceContext_IASetIndexBuffer(ctx, g_dol.dibo, DXGI_FORMAT_R16_UINT, 0);
+    ID3D11DeviceContext_VSSetShader(ctx, g_dol.dvs, NULL, 0);
+    ID3D11DeviceContext_PSSetShader(ctx, g_dol.dps, NULL, 0);
+    ID3D11DeviceContext_PSSetShaderResources(ctx, 0, 1, &g_dol.dsrv);
+    ID3D11DeviceContext_DrawIndexed(ctx, DOLPHIN_NINDICES, 0, 0);
 }
 
 static void dol_cleanup(void) {
     if (g_dol.rs) ID3D11RasterizerState_Release(g_dol.rs);
+    if (g_dol.smp) ID3D11SamplerState_Release(g_dol.smp);
+    if (g_dol.csrv) ID3D11ShaderResourceView_Release(g_dol.csrv);
+    if (g_dol.ssrv) ID3D11ShaderResourceView_Release(g_dol.ssrv);
+    if (g_dol.dsrv) ID3D11ShaderResourceView_Release(g_dol.dsrv);
+    if (g_dol.ctex) ID3D11Texture2D_Release(g_dol.ctex);
+    if (g_dol.stex) ID3D11Texture2D_Release(g_dol.stex);
+    if (g_dol.dtex) ID3D11Texture2D_Release(g_dol.dtex);
     if (g_dol.cbo) ID3D11Buffer_Release(g_dol.cbo);
-    if (g_dol.ibo) ID3D11Buffer_Release(g_dol.ibo);
-    if (g_dol.vbo) ID3D11Buffer_Release(g_dol.vbo);
-    if (g_dol.layout) ID3D11InputLayout_Release(g_dol.layout);
-    if (g_dol.ps) ID3D11PixelShader_Release(g_dol.ps);
-    if (g_dol.vs) ID3D11VertexShader_Release(g_dol.vs);
+    if (g_dol.sibo) ID3D11Buffer_Release(g_dol.sibo);
+    if (g_dol.svbo) ID3D11Buffer_Release(g_dol.svbo);
+    if (g_dol.dibo) ID3D11Buffer_Release(g_dol.dibo);
+    if (g_dol.dvbo) ID3D11Buffer_Release(g_dol.dvbo);
+    if (g_dol.slayout) ID3D11InputLayout_Release(g_dol.slayout);
+    if (g_dol.dlayout) ID3D11InputLayout_Release(g_dol.dlayout);
+    if (g_dol.sps) ID3D11PixelShader_Release(g_dol.sps);
+    if (g_dol.svs) ID3D11VertexShader_Release(g_dol.svs);
+    if (g_dol.dps) ID3D11PixelShader_Release(g_dol.dps);
+    if (g_dol.dvs) ID3D11VertexShader_Release(g_dol.dvs);
     memset(&g_dol, 0, sizeof(g_dol));
 }
 
