@@ -1,0 +1,10 @@
+# Generated SPIR-V shader headers (produced in CI)
+src/cube.vert.inc
+src/cube.frag.inc
+# Build output
+*.exe
+*.o
+build/
+vk/
+vh/
+vl/

@@ -1,0 +1,69 @@
+name: Build AIO-Cube (Windows PE)
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [ main ]
+    paths:
+      - 'src/**'
+      - 'cmake/**'
+      - '.github/workflows/build-windows.yml'
+
+jobs:
+  build:
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install cross toolchain + shader compiler
+        run: |
+          sudo apt-get update -q
+          sudo apt-get install -y -q \
+            gcc-mingw-w64-x86-64 g++-mingw-w64-x86-64 \
+            glslang-tools cmake ninja-build git
+
+      - name: Fetch Vulkan-Headers
+        run: |
+          git clone --depth 1 --branch sdk-1.3.239.0 \
+            https://github.com/KhronosGroup/Vulkan-Headers.git vh
+          cmake -S vh -B vh/build -DCMAKE_INSTALL_PREFIX=$PWD/vk
+          cmake --install vh/build
+
+      - name: Cross-build Vulkan-Loader (mingw vulkan-1 import lib)
+        run: |
+          git clone --depth 1 --branch sdk-1.3.239.0 \
+            https://github.com/KhronosGroup/Vulkan-Loader.git vl
+          cmake -S vl -B vl/build -G Ninja \
+            -DCMAKE_TOOLCHAIN_FILE=$PWD/cmake/mingw-w64-x86_64.cmake \
+            -DVULKAN_HEADERS_INSTALL_DIR=$PWD/vk \
+            -DCMAKE_INSTALL_PREFIX=$PWD/vk \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DUSE_MASM=OFF -DUSE_GAS=OFF
+          cmake --build vl/build
+          cmake --install vl/build
+          echo "--- import lib(s): ---"
+          find $PWD/vk -name 'libvulkan*' -o -name 'vulkan-1*' | sort
+
+      - name: Compile shaders to SPIR-V C headers
+        run: |
+          glslangValidator -V -x -o src/cube.vert.inc src/cube.vert
+          glslangValidator -V -x -o src/cube.frag.inc src/cube.frag
+
+      - name: Cross-compile AIO-Cube.exe
+        run: |
+          x86_64-w64-mingw32-gcc src/cube.c \
+            -I src -I vk/include \
+            -DVK_USE_PLATFORM_WIN32_KHR -DWIN32_LEAN_AND_MEAN \
+            -O2 -mwindows \
+            -L vk/lib -L vk/bin \
+            -o AIO-Cube.exe \
+            -lvulkan-1 -lgdi32 -luser32 -lopengl32
+          file AIO-Cube.exe
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: AIO-Cube-windows-x86_64
+          path: |
+            AIO-Cube.exe
+            vk/bin/vulkan-1.dll
