@@ -568,11 +568,552 @@ static void inst_cleanup(void) {
     memset(&g_inst, 0, sizeof(g_inst));
 }
 
+// ============================= TESSELLATION scene ===========================
+// An icosahedron whose 20 triangle patches are tessellated (hull/domain shaders,
+// SM5 / feature level 11) and displaced onto a sphere; the tess factor animates
+// 1..16 so you watch it refine from faceted to smooth.
+#define PIF 3.14159265f
+
+static const char *kTessHLSL =
+    "cbuffer CB : register(b0) { row_major float4x4 mvp; float tessf; float3 pad; };\n"
+    "struct VSOut { float3 pos : POSITION; };\n"
+    "VSOut VSMain(float3 pos : POSITION) { VSOut o; o.pos = normalize(pos); return o; }\n"
+    "struct PatchConst { float edges[3] : SV_TessFactor; float inside : SV_InsideTessFactor; };\n"
+    "PatchConst HSConst(InputPatch<VSOut,3> ip) {\n"
+    "  PatchConst p; p.edges[0]=p.edges[1]=p.edges[2]=tessf; p.inside=tessf; return p; }\n"
+    "[domain(\"tri\")][partitioning(\"fractional_odd\")][outputtopology(\"triangle_cw\")]\n"
+    "[outputcontrolpoints(3)][patchconstantfunc(\"HSConst\")]\n"
+    "VSOut HSMain(InputPatch<VSOut,3> ip, uint id : SV_OutputControlPointID) { return ip[id]; }\n"
+    "struct DSOut { float4 pos : SV_POSITION; float3 col : COLOR; };\n"
+    "[domain(\"tri\")]\n"
+    "DSOut DSMain(PatchConst pc, float3 bary : SV_DomainLocation, const OutputPatch<VSOut,3> patch) {\n"
+    "  float3 p = patch[0].pos*bary.x + patch[1].pos*bary.y + patch[2].pos*bary.z;\n"
+    "  p = normalize(p); DSOut o; o.pos = mul(float4(p*1.6,1.0), mvp); o.col = p*0.5+0.5; return o; }\n"
+    "float4 PSMain(DSOut i) : SV_TARGET { return float4(i.col, 1.0); }\n";
+
+typedef struct {
+    Mat4 mvp;
+    float tessf;
+    float pad[3];
+} TessCB;
+
+static struct {
+    ID3D11VertexShader *vs;
+    ID3D11HullShader *hs;
+    ID3D11DomainShader *ds;
+    ID3D11PixelShader *ps;
+    ID3D11InputLayout *layout;
+    ID3D11Buffer *vbo, *cbo;
+} g_tess;
+
+static int tess_init(ID3D11Device *dev, ID3D11DeviceContext *ctx, int w, int h) {
+    (void)ctx;
+    (void)w;
+    (void)h;
+    ID3DBlob *vsb = compile_hlsl(kTessHLSL, "VSMain", "vs_5_0");
+    ID3DBlob *hsb = compile_hlsl(kTessHLSL, "HSMain", "hs_5_0");
+    ID3DBlob *dsb = compile_hlsl(kTessHLSL, "DSMain", "ds_5_0");
+    ID3DBlob *psb = compile_hlsl(kTessHLSL, "PSMain", "ps_5_0");
+    if (!vsb || !hsb || !dsb || !psb) return 1;
+    ID3D11Device_CreateVertexShader(dev, ID3D10Blob_GetBufferPointer(vsb),
+                                    ID3D10Blob_GetBufferSize(vsb), NULL, &g_tess.vs);
+    ID3D11Device_CreateHullShader(dev, ID3D10Blob_GetBufferPointer(hsb),
+                                  ID3D10Blob_GetBufferSize(hsb), NULL, &g_tess.hs);
+    ID3D11Device_CreateDomainShader(dev, ID3D10Blob_GetBufferPointer(dsb),
+                                    ID3D10Blob_GetBufferSize(dsb), NULL, &g_tess.ds);
+    ID3D11Device_CreatePixelShader(dev, ID3D10Blob_GetBufferPointer(psb),
+                                   ID3D10Blob_GetBufferSize(psb), NULL, &g_tess.ps);
+    D3D11_INPUT_ELEMENT_DESC il[] = {
+        {"POSITION", 0, DXGI_FORMAT_R32G32B32_FLOAT, 0, 0, D3D11_INPUT_PER_VERTEX_DATA, 0},
+    };
+    ID3D11Device_CreateInputLayout(dev, il, 1, ID3D10Blob_GetBufferPointer(vsb),
+                                   ID3D10Blob_GetBufferSize(vsb), &g_tess.layout);
+    ID3D10Blob_Release(vsb);
+    ID3D10Blob_Release(hsb);
+    ID3D10Blob_Release(dsb);
+    ID3D10Blob_Release(psb);
+    if (!g_tess.hs || !g_tess.ds) {
+        fail_box(
+            "Tessellation needs Direct3D 11 feature level 11.\n\n"
+            "This container's device doesn't support hull/domain shaders.");
+        return 1;
+    }
+
+    const float t = 1.618034f;
+    const float ico[12][3] = {
+        {-1, t, 0}, {1, t, 0}, {-1, -t, 0}, {1, -t, 0}, {0, -1, t},  {0, 1, t},
+        {0, -1, -t}, {0, 1, -t}, {t, 0, -1}, {t, 0, 1}, {-t, 0, -1}, {-t, 0, 1},
+    };
+    const int faces[20][3] = {
+        {0, 11, 5}, {0, 5, 1}, {0, 1, 7}, {0, 7, 10}, {0, 10, 11}, {1, 5, 9}, {5, 11, 4},
+        {11, 10, 2}, {10, 7, 6}, {7, 1, 8}, {3, 9, 4}, {3, 4, 2}, {3, 2, 6}, {3, 6, 8},
+        {3, 8, 9}, {4, 9, 5}, {2, 4, 11}, {6, 2, 10}, {8, 6, 7}, {9, 8, 1},
+    };
+    float cp[60][3];
+    int n = 0;
+    for (int f = 0; f < 20; f++)
+        for (int k = 0; k < 3; k++) {
+            cp[n][0] = ico[faces[f][k]][0];
+            cp[n][1] = ico[faces[f][k]][1];
+            cp[n][2] = ico[faces[f][k]][2];
+            n++;
+        }
+    D3D11_BUFFER_DESC vbd;
+    memset(&vbd, 0, sizeof(vbd));
+    vbd.ByteWidth = sizeof(cp);
+    vbd.Usage = D3D11_USAGE_IMMUTABLE;
+    vbd.BindFlags = D3D11_BIND_VERTEX_BUFFER;
+    D3D11_SUBRESOURCE_DATA sr;
+    memset(&sr, 0, sizeof(sr));
+    sr.pSysMem = cp;
+    ID3D11Device_CreateBuffer(dev, &vbd, &sr, &g_tess.vbo);
+
+    D3D11_BUFFER_DESC cbd;
+    memset(&cbd, 0, sizeof(cbd));
+    cbd.ByteWidth = sizeof(TessCB);
+    cbd.Usage = D3D11_USAGE_DYNAMIC;
+    cbd.BindFlags = D3D11_BIND_CONSTANT_BUFFER;
+    cbd.CPUAccessFlags = D3D11_CPU_ACCESS_WRITE;
+    ID3D11Device_CreateBuffer(dev, &cbd, NULL, &g_tess.cbo);
+    return 0;
+}
+
+static void tess_frame(ID3D11DeviceContext *ctx, double t, float aspect) {
+    float a = (float)t * 0.6f;
+    Mat4 model = mat_mul(mat_rotate(0, 1, 0, a), mat_rotate(1, 0, 0, a * 0.4f));
+    TessCB cb;
+    cb.mvp = mat_mul(mat_mul(model, mat_translate(0, 0, -5)),
+                     mat_perspective(0.7854f, aspect, 0.1f, 100.0f));
+    cb.tessf = 1.0f + (sinf((float)t * 0.8f) * 0.5f + 0.5f) * 15.0f;  // 1..16
+
+    D3D11_MAPPED_SUBRESOURCE map;
+    if (SUCCEEDED(ID3D11DeviceContext_Map(ctx, (ID3D11Resource *)g_tess.cbo, 0,
+                                          D3D11_MAP_WRITE_DISCARD, 0, &map))) {
+        memcpy(map.pData, &cb, sizeof(cb));
+        ID3D11DeviceContext_Unmap(ctx, (ID3D11Resource *)g_tess.cbo, 0);
+    }
+
+    UINT stride = sizeof(float) * 3, offset = 0;
+    ID3D11DeviceContext_IASetInputLayout(ctx, g_tess.layout);
+    ID3D11DeviceContext_IASetVertexBuffers(ctx, 0, 1, &g_tess.vbo, &stride, &offset);
+    ID3D11DeviceContext_IASetPrimitiveTopology(ctx, D3D11_PRIMITIVE_TOPOLOGY_3_CONTROL_POINT_PATCHLIST);
+    ID3D11DeviceContext_VSSetShader(ctx, g_tess.vs, NULL, 0);
+    ID3D11DeviceContext_HSSetShader(ctx, g_tess.hs, NULL, 0);
+    ID3D11DeviceContext_DSSetShader(ctx, g_tess.ds, NULL, 0);
+    ID3D11DeviceContext_PSSetShader(ctx, g_tess.ps, NULL, 0);
+    ID3D11DeviceContext_HSSetConstantBuffers(ctx, 0, 1, &g_tess.cbo);
+    ID3D11DeviceContext_DSSetConstantBuffers(ctx, 0, 1, &g_tess.cbo);
+    ID3D11DeviceContext_Draw(ctx, 60, 0);
+}
+
+static void tess_cleanup(void) {
+    if (g_tess.cbo) ID3D11Buffer_Release(g_tess.cbo);
+    if (g_tess.vbo) ID3D11Buffer_Release(g_tess.vbo);
+    if (g_tess.layout) ID3D11InputLayout_Release(g_tess.layout);
+    if (g_tess.ps) ID3D11PixelShader_Release(g_tess.ps);
+    if (g_tess.ds) ID3D11DomainShader_Release(g_tess.ds);
+    if (g_tess.hs) ID3D11HullShader_Release(g_tess.hs);
+    if (g_tess.vs) ID3D11VertexShader_Release(g_tess.vs);
+    memset(&g_tess, 0, sizeof(g_tess));
+}
+
+// ============================== COMPUTE scene ===============================
+// A compute shader (cs_5_0) advances a swirling particle cloud in a structured
+// buffer each frame; the vertex shader reads it back by SV_VertexID and draws
+// the particles as points. Exercises the entire D3D11 compute path + UAV/SRV.
+#define PART_COUNT 131072  // 512 * 256
+#define PART_GROUPS (PART_COUNT / 256)
+
+static const char *kCompCS =
+    "struct Particle { float3 pos; float3 vel; };\n"
+    "RWStructuredBuffer<Particle> parts : register(u0);\n"
+    "cbuffer CB : register(b0) { float dt; float time; float2 pad; };\n"
+    "[numthreads(256,1,1)]\n"
+    "void CSMain(uint3 id : SV_DispatchThreadID) {\n"
+    "  Particle p = parts[id.x];\n"
+    "  float3 toC = -p.pos; float d = length(toC) + 0.001;\n"
+    "  float3 grav = toC/d * (3.0/(d*d+0.5));\n"
+    "  float3 tang = cross(float3(0,1,0), p.pos);\n"
+    "  p.vel += (grav + tang*0.25) * dt; p.vel *= 0.999;\n"
+    "  p.pos += p.vel * dt;\n"
+    "  if (length(p.pos) > 32.0) { p.pos *= 0.03; p.vel *= 0.2; }\n"
+    "  parts[id.x] = p; }\n";
+
+static const char *kCompVS =
+    "struct Particle { float3 pos; float3 vel; };\n"
+    "StructuredBuffer<Particle> parts : register(t0);\n"
+    "cbuffer CB : register(b0) { row_major float4x4 mvp; };\n"
+    "struct VSOut { float4 pos : SV_POSITION; float3 col : COLOR; };\n"
+    "VSOut VSMain(uint vid : SV_VertexID) {\n"
+    "  Particle p = parts[vid]; VSOut o; o.pos = mul(float4(p.pos,1.0), mvp);\n"
+    "  float sp = saturate(length(p.vel) * 0.25);\n"
+    "  o.col = lerp(float3(0.15,0.35,1.0), float3(1.0,0.55,0.1), sp); return o; }\n"
+    "float4 PSMain(VSOut i) : SV_TARGET { return float4(i.col, 1.0); }\n";
+
+typedef struct {
+    float pos[3];
+    float vel[3];
+} Particle;
+
+typedef struct {
+    float dt, time, pad[2];
+} CompCB;
+
+static struct {
+    ID3D11ComputeShader *cs;
+    ID3D11VertexShader *vs;
+    ID3D11PixelShader *ps;
+    ID3D11Buffer *buf, *cscb, *vscb;
+    ID3D11UnorderedAccessView *uav;
+    ID3D11ShaderResourceView *srv;
+} g_comp;
+
+static float frand(void) { return (float)rand() / (float)RAND_MAX; }
+
+static int comp_init(ID3D11Device *dev, ID3D11DeviceContext *ctx, int w, int h) {
+    (void)ctx;
+    (void)w;
+    (void)h;
+    ID3DBlob *csb = compile_hlsl(kCompCS, "CSMain", "cs_5_0");
+    ID3DBlob *vsb = compile_hlsl(kCompVS, "VSMain", "vs_5_0");
+    ID3DBlob *psb = compile_hlsl(kCompVS, "PSMain", "ps_5_0");
+    if (!csb || !vsb || !psb) return 1;
+    ID3D11Device_CreateComputeShader(dev, ID3D10Blob_GetBufferPointer(csb),
+                                     ID3D10Blob_GetBufferSize(csb), NULL, &g_comp.cs);
+    ID3D11Device_CreateVertexShader(dev, ID3D10Blob_GetBufferPointer(vsb),
+                                    ID3D10Blob_GetBufferSize(vsb), NULL, &g_comp.vs);
+    ID3D11Device_CreatePixelShader(dev, ID3D10Blob_GetBufferPointer(psb),
+                                   ID3D10Blob_GetBufferSize(psb), NULL, &g_comp.ps);
+    ID3D10Blob_Release(csb);
+    ID3D10Blob_Release(vsb);
+    ID3D10Blob_Release(psb);
+    if (!g_comp.cs) {
+        fail_box("Compute shaders (cs_5_0) are not available on this D3D11 device.");
+        return 1;
+    }
+
+    Particle *init = (Particle *)malloc(sizeof(Particle) * PART_COUNT);
+    if (!init) return 1;
+    srand(1234);
+    for (int i = 0; i < PART_COUNT; i++) {
+        float r = 4.0f + frand() * 8.0f;
+        float th = frand() * 2.0f * PIF, ph = (frand() - 0.5f) * PIF;
+        init[i].pos[0] = r * cosf(ph) * cosf(th);
+        init[i].pos[1] = r * sinf(ph);
+        init[i].pos[2] = r * cosf(ph) * sinf(th);
+        // tangential initial velocity (swirl)
+        init[i].vel[0] = -init[i].pos[2] * 0.15f;
+        init[i].vel[1] = (frand() - 0.5f) * 0.4f;
+        init[i].vel[2] = init[i].pos[0] * 0.15f;
+    }
+    D3D11_BUFFER_DESC bd;
+    memset(&bd, 0, sizeof(bd));
+    bd.ByteWidth = sizeof(Particle) * PART_COUNT;
+    bd.Usage = D3D11_USAGE_DEFAULT;
+    bd.BindFlags = D3D11_BIND_UNORDERED_ACCESS | D3D11_BIND_SHADER_RESOURCE;
+    bd.MiscFlags = D3D11_RESOURCE_MISC_BUFFER_STRUCTURED;
+    bd.StructureByteStride = sizeof(Particle);
+    D3D11_SUBRESOURCE_DATA sr;
+    memset(&sr, 0, sizeof(sr));
+    sr.pSysMem = init;
+    ID3D11Device_CreateBuffer(dev, &bd, &sr, &g_comp.buf);
+    free(init);
+
+    D3D11_UNORDERED_ACCESS_VIEW_DESC ud;
+    memset(&ud, 0, sizeof(ud));
+    ud.Format = DXGI_FORMAT_UNKNOWN;
+    ud.ViewDimension = D3D11_UAV_DIMENSION_BUFFER;
+    ud.Buffer.NumElements = PART_COUNT;
+    ID3D11Device_CreateUnorderedAccessView(dev, (ID3D11Resource *)g_comp.buf, &ud, &g_comp.uav);
+
+    D3D11_SHADER_RESOURCE_VIEW_DESC sd;
+    memset(&sd, 0, sizeof(sd));
+    sd.Format = DXGI_FORMAT_UNKNOWN;
+    sd.ViewDimension = D3D11_SRV_DIMENSION_BUFFER;
+    sd.Buffer.NumElements = PART_COUNT;
+    ID3D11Device_CreateShaderResourceView(dev, (ID3D11Resource *)g_comp.buf, &sd, &g_comp.srv);
+
+    D3D11_BUFFER_DESC cbd;
+    memset(&cbd, 0, sizeof(cbd));
+    cbd.Usage = D3D11_USAGE_DYNAMIC;
+    cbd.BindFlags = D3D11_BIND_CONSTANT_BUFFER;
+    cbd.CPUAccessFlags = D3D11_CPU_ACCESS_WRITE;
+    cbd.ByteWidth = sizeof(CompCB);
+    ID3D11Device_CreateBuffer(dev, &cbd, NULL, &g_comp.cscb);
+    cbd.ByteWidth = sizeof(Mat4);
+    ID3D11Device_CreateBuffer(dev, &cbd, NULL, &g_comp.vscb);
+    return (g_comp.uav && g_comp.srv) ? 0 : 1;
+}
+
+static void comp_frame(ID3D11DeviceContext *ctx, double t, float aspect) {
+    // Advance the simulation (fixed dt for stability).
+    CompCB cb = {0.016f, (float)t, {0, 0}};
+    D3D11_MAPPED_SUBRESOURCE map;
+    if (SUCCEEDED(ID3D11DeviceContext_Map(ctx, (ID3D11Resource *)g_comp.cscb, 0,
+                                          D3D11_MAP_WRITE_DISCARD, 0, &map))) {
+        memcpy(map.pData, &cb, sizeof(cb));
+        ID3D11DeviceContext_Unmap(ctx, (ID3D11Resource *)g_comp.cscb, 0);
+    }
+    ID3D11DeviceContext_CSSetShader(ctx, g_comp.cs, NULL, 0);
+    ID3D11DeviceContext_CSSetConstantBuffers(ctx, 0, 1, &g_comp.cscb);
+    ID3D11DeviceContext_CSSetUnorderedAccessViews(ctx, 0, 1, &g_comp.uav, NULL);
+    ID3D11DeviceContext_Dispatch(ctx, PART_GROUPS, 1, 1);
+    // Unbind UAV + compute shader before reading the buffer as an SRV.
+    ID3D11UnorderedAccessView *nuav = NULL;
+    ID3D11DeviceContext_CSSetUnorderedAccessViews(ctx, 0, 1, &nuav, NULL);
+    ID3D11DeviceContext_CSSetShader(ctx, NULL, NULL, 0);
+
+    Mat4 world = mat_mul(mat_rotate(0, 1, 0, (float)t * 0.2f), mat_rotate(1, 0, 0, 0.35f));
+    Mat4 mvp = mat_mul(mat_mul(world, mat_translate(0, 0, -70)),
+                       mat_perspective(0.9f, aspect, 0.1f, 300.0f));
+    if (SUCCEEDED(ID3D11DeviceContext_Map(ctx, (ID3D11Resource *)g_comp.vscb, 0,
+                                          D3D11_MAP_WRITE_DISCARD, 0, &map))) {
+        memcpy(map.pData, mvp.m, sizeof(mvp.m));
+        ID3D11DeviceContext_Unmap(ctx, (ID3D11Resource *)g_comp.vscb, 0);
+    }
+    ID3D11DeviceContext_IASetInputLayout(ctx, NULL);
+    ID3D11DeviceContext_IASetPrimitiveTopology(ctx, D3D11_PRIMITIVE_TOPOLOGY_POINTLIST);
+    ID3D11DeviceContext_VSSetShader(ctx, g_comp.vs, NULL, 0);
+    ID3D11DeviceContext_VSSetConstantBuffers(ctx, 0, 1, &g_comp.vscb);
+    ID3D11DeviceContext_VSSetShaderResources(ctx, 0, 1, &g_comp.srv);
+    ID3D11DeviceContext_PSSetShader(ctx, g_comp.ps, NULL, 0);
+    ID3D11DeviceContext_Draw(ctx, PART_COUNT, 0);
+    // Unbind the SRV so next frame's compute can take the UAV.
+    ID3D11ShaderResourceView *nsrv = NULL;
+    ID3D11DeviceContext_VSSetShaderResources(ctx, 0, 1, &nsrv);
+}
+
+static void comp_cleanup(void) {
+    if (g_comp.vscb) ID3D11Buffer_Release(g_comp.vscb);
+    if (g_comp.cscb) ID3D11Buffer_Release(g_comp.cscb);
+    if (g_comp.srv) ID3D11ShaderResourceView_Release(g_comp.srv);
+    if (g_comp.uav) ID3D11UnorderedAccessView_Release(g_comp.uav);
+    if (g_comp.buf) ID3D11Buffer_Release(g_comp.buf);
+    if (g_comp.ps) ID3D11PixelShader_Release(g_comp.ps);
+    if (g_comp.vs) ID3D11VertexShader_Release(g_comp.vs);
+    if (g_comp.cs) ID3D11ComputeShader_Release(g_comp.cs);
+    memset(&g_comp, 0, sizeof(g_comp));
+}
+
+// ============================== DOLPHIN scene ===============================
+// A native homage to the classic DolphinVS sample: a procedurally generated
+// dolphin body (rings along a spine) that "swims" via a vertex-shader body wave,
+// lit with a simple Lambert term and animated caustic-style water modulation.
+// No licensed assets - the original mesh/caustic textures are reimplemented.
+#define DOL_RINGS 28
+#define DOL_SEGS 16
+#define DOL_BODY_V (DOL_RINGS * DOL_SEGS)
+#define DOL_EXTRA_V 7  // tail fluke (4) + dorsal fin (3)
+#define DOL_MAX_V (DOL_BODY_V + DOL_EXTRA_V)
+#define DOL_MAX_I ((DOL_RINGS - 1) * DOL_SEGS * 6 + 9)
+
+static const char *kDolHLSL =
+    "cbuffer CB : register(b0) { row_major float4x4 mvp; float time; float3 pad; };\n"
+    "struct VSIn { float3 pos : POSITION; float3 nrm : NORMAL; };\n"
+    "struct VSOut { float4 pos : SV_POSITION; float3 nrm : NORMAL; float3 wp : TEXCOORD0; };\n"
+    "VSOut VSMain(VSIn i) {\n"
+    "  float3 p = i.pos;\n"
+    "  float env = saturate((2.0 - p.z) / 4.3); env = env*env;\n"
+    "  p.y += sin(p.z*1.6 - time*6.0) * 0.5 * env;\n"
+    "  VSOut o; o.pos = mul(float4(p,1.0), mvp); o.nrm = i.nrm; o.wp = p; return o; }\n"
+    "float4 PSMain(VSOut i) : SV_TARGET {\n"
+    "  float3 N = normalize(i.nrm); float3 L = normalize(float3(0.4,0.85,0.35));\n"
+    "  float diff = saturate(dot(N,L))*0.7 + 0.35;\n"
+    "  float belly = saturate(0.5 - i.wp.y*0.7);\n"
+    "  float3 base = lerp(float3(0.16,0.30,0.45), float3(0.80,0.85,0.90), belly);\n"
+    "  float caus = 0.85 + 0.15*sin(i.wp.x*3.0+time*2.0)*sin(i.wp.z*3.0 - time*1.5);\n"
+    "  return float4(base*diff*caus, 1.0); }\n";
+
+typedef struct {
+    float pos[3];
+    float nrm[3];
+} DolVertex;
+
+typedef struct {
+    Mat4 mvp;
+    float time;
+    float pad[3];
+} DolCB;
+
+static struct {
+    ID3D11VertexShader *vs;
+    ID3D11PixelShader *ps;
+    ID3D11InputLayout *layout;
+    ID3D11Buffer *vbo, *ibo, *cbo;
+    ID3D11RasterizerState *rs;
+    UINT index_count;
+} g_dol;
+
+static void dol_set(DolVertex *v, float x, float y, float z, float nx, float ny, float nz) {
+    float l = sqrtf(nx * nx + ny * ny + nz * nz);
+    if (l < 1e-5f) l = 1.0f;
+    v->pos[0] = x;
+    v->pos[1] = y;
+    v->pos[2] = z;
+    v->nrm[0] = nx / l;
+    v->nrm[1] = ny / l;
+    v->nrm[2] = nz / l;
+}
+
+static int dol_init(ID3D11Device *dev, ID3D11DeviceContext *ctx, int w, int h) {
+    (void)ctx;
+    (void)w;
+    (void)h;
+    ID3DBlob *vsb = compile_hlsl(kDolHLSL, "VSMain", "vs_4_0");
+    ID3DBlob *psb = compile_hlsl(kDolHLSL, "PSMain", "ps_4_0");
+    if (!vsb || !psb) return 1;
+    ID3D11Device_CreateVertexShader(dev, ID3D10Blob_GetBufferPointer(vsb),
+                                    ID3D10Blob_GetBufferSize(vsb), NULL, &g_dol.vs);
+    ID3D11Device_CreatePixelShader(dev, ID3D10Blob_GetBufferPointer(psb),
+                                   ID3D10Blob_GetBufferSize(psb), NULL, &g_dol.ps);
+    D3D11_INPUT_ELEMENT_DESC il[] = {
+        {"POSITION", 0, DXGI_FORMAT_R32G32B32_FLOAT, 0, 0, D3D11_INPUT_PER_VERTEX_DATA, 0},
+        {"NORMAL", 0, DXGI_FORMAT_R32G32B32_FLOAT, 0, 12, D3D11_INPUT_PER_VERTEX_DATA, 0},
+    };
+    ID3D11Device_CreateInputLayout(dev, il, 2, ID3D10Blob_GetBufferPointer(vsb),
+                                   ID3D10Blob_GetBufferSize(vsb), &g_dol.layout);
+    ID3D10Blob_Release(vsb);
+    ID3D10Blob_Release(psb);
+
+    DolVertex *V = (DolVertex *)malloc(sizeof(DolVertex) * DOL_MAX_V);
+    uint16_t *I = (uint16_t *)malloc(sizeof(uint16_t) * DOL_MAX_I);
+    if (!V || !I) {
+        free(V);
+        free(I);
+        return 1;
+    }
+    int nv = 0, ni = 0;
+    for (int i = 0; i < DOL_RINGS; i++) {
+        float s = (float)i / (float)(DOL_RINGS - 1);
+        float z = -2.2f + s * 4.2f;          // tail .. nose
+        float prof = sinf(PIF * s);          // 0..1..0
+        float rr = 0.5f * powf(prof, 0.6f);  // body radius
+        float rx = rr * 0.78f, ry = rr * 0.98f;
+        for (int j = 0; j < DOL_SEGS; j++) {
+            float ang = 2.0f * PIF * (float)j / (float)DOL_SEGS;
+            float cx = cosf(ang), sy = sinf(ang);
+            dol_set(&V[nv++], rx * cx, ry * sy, z, cx, sy, 0.0f);
+        }
+    }
+    for (int i = 0; i < DOL_RINGS - 1; i++)
+        for (int j = 0; j < DOL_SEGS; j++) {
+            int a = i * DOL_SEGS + j;
+            int b = i * DOL_SEGS + (j + 1) % DOL_SEGS;
+            int c = (i + 1) * DOL_SEGS + j;
+            int d = (i + 1) * DOL_SEGS + (j + 1) % DOL_SEGS;
+            I[ni++] = (uint16_t)a;
+            I[ni++] = (uint16_t)c;
+            I[ni++] = (uint16_t)b;
+            I[ni++] = (uint16_t)b;
+            I[ni++] = (uint16_t)c;
+            I[ni++] = (uint16_t)d;
+        }
+    // Tail fluke (horizontal), near z=-2.2.
+    int fb = nv;
+    dol_set(&V[nv++], 0.0f, 0.0f, -2.05f, 0, 1, 0);
+    dol_set(&V[nv++], -0.95f, 0.0f, -2.9f, 0, 1, 0);
+    dol_set(&V[nv++], 0.0f, 0.0f, -2.65f, 0, 1, 0);
+    dol_set(&V[nv++], 0.95f, 0.0f, -2.9f, 0, 1, 0);
+    I[ni++] = (uint16_t)fb;
+    I[ni++] = (uint16_t)(fb + 1);
+    I[ni++] = (uint16_t)(fb + 2);
+    I[ni++] = (uint16_t)fb;
+    I[ni++] = (uint16_t)(fb + 2);
+    I[ni++] = (uint16_t)(fb + 3);
+    // Dorsal fin (vertical), mid-body z~0.3.
+    int db = nv;
+    dol_set(&V[nv++], 0.0f, 0.42f, 0.45f, 0, 0, 1);
+    dol_set(&V[nv++], 0.0f, 0.42f, -0.15f, 0, 0, 1);
+    dol_set(&V[nv++], 0.0f, 1.05f, 0.10f, 0, 0, 1);
+    I[ni++] = (uint16_t)db;
+    I[ni++] = (uint16_t)(db + 1);
+    I[ni++] = (uint16_t)(db + 2);
+    g_dol.index_count = (UINT)ni;
+
+    D3D11_BUFFER_DESC vbd;
+    memset(&vbd, 0, sizeof(vbd));
+    vbd.ByteWidth = (UINT)(sizeof(DolVertex) * nv);
+    vbd.Usage = D3D11_USAGE_IMMUTABLE;
+    vbd.BindFlags = D3D11_BIND_VERTEX_BUFFER;
+    D3D11_SUBRESOURCE_DATA vsr;
+    memset(&vsr, 0, sizeof(vsr));
+    vsr.pSysMem = V;
+    ID3D11Device_CreateBuffer(dev, &vbd, &vsr, &g_dol.vbo);
+
+    D3D11_BUFFER_DESC ibd;
+    memset(&ibd, 0, sizeof(ibd));
+    ibd.ByteWidth = (UINT)(sizeof(uint16_t) * ni);
+    ibd.Usage = D3D11_USAGE_IMMUTABLE;
+    ibd.BindFlags = D3D11_BIND_INDEX_BUFFER;
+    D3D11_SUBRESOURCE_DATA isr;
+    memset(&isr, 0, sizeof(isr));
+    isr.pSysMem = I;
+    ID3D11Device_CreateBuffer(dev, &ibd, &isr, &g_dol.ibo);
+    free(V);
+    free(I);
+
+    D3D11_BUFFER_DESC cbd;
+    memset(&cbd, 0, sizeof(cbd));
+    cbd.ByteWidth = sizeof(DolCB);
+    cbd.Usage = D3D11_USAGE_DYNAMIC;
+    cbd.BindFlags = D3D11_BIND_CONSTANT_BUFFER;
+    cbd.CPUAccessFlags = D3D11_CPU_ACCESS_WRITE;
+    ID3D11Device_CreateBuffer(dev, &cbd, NULL, &g_dol.cbo);
+
+    // No back-face culling (procedural mesh winding isn't guaranteed consistent).
+    D3D11_RASTERIZER_DESC rd;
+    memset(&rd, 0, sizeof(rd));
+    rd.FillMode = D3D11_FILL_SOLID;
+    rd.CullMode = D3D11_CULL_NONE;
+    rd.DepthClipEnable = TRUE;
+    ID3D11Device_CreateRasterizerState(dev, &rd, &g_dol.rs);
+    return 0;
+}
+
+static void dol_frame(ID3D11DeviceContext *ctx, double t, float aspect) {
+    DolCB cb;
+    Mat4 world = mat_mul(mat_rotate(0, 1, 0, (float)t * 0.35f), mat_rotate(1, 0, 0, 0.15f));
+    cb.mvp = mat_mul(mat_mul(world, mat_translate(0, 0, -6.5f)),
+                     mat_perspective(0.7854f, aspect, 0.1f, 100.0f));
+    cb.time = (float)t;
+
+    D3D11_MAPPED_SUBRESOURCE map;
+    if (SUCCEEDED(ID3D11DeviceContext_Map(ctx, (ID3D11Resource *)g_dol.cbo, 0,
+                                          D3D11_MAP_WRITE_DISCARD, 0, &map))) {
+        memcpy(map.pData, &cb, sizeof(cb));
+        ID3D11DeviceContext_Unmap(ctx, (ID3D11Resource *)g_dol.cbo, 0);
+    }
+    UINT stride = sizeof(DolVertex), offset = 0;
+    ID3D11DeviceContext_RSSetState(ctx, g_dol.rs);
+    ID3D11DeviceContext_IASetInputLayout(ctx, g_dol.layout);
+    ID3D11DeviceContext_IASetVertexBuffers(ctx, 0, 1, &g_dol.vbo, &stride, &offset);
+    ID3D11DeviceContext_IASetIndexBuffer(ctx, g_dol.ibo, DXGI_FORMAT_R16_UINT, 0);
+    ID3D11DeviceContext_IASetPrimitiveTopology(ctx, D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
+    ID3D11DeviceContext_VSSetShader(ctx, g_dol.vs, NULL, 0);
+    ID3D11DeviceContext_VSSetConstantBuffers(ctx, 0, 1, &g_dol.cbo);
+    ID3D11DeviceContext_PSSetShader(ctx, g_dol.ps, NULL, 0);
+    ID3D11DeviceContext_DrawIndexed(ctx, g_dol.index_count, 0, 0);
+}
+
+static void dol_cleanup(void) {
+    if (g_dol.rs) ID3D11RasterizerState_Release(g_dol.rs);
+    if (g_dol.cbo) ID3D11Buffer_Release(g_dol.cbo);
+    if (g_dol.ibo) ID3D11Buffer_Release(g_dol.ibo);
+    if (g_dol.vbo) ID3D11Buffer_Release(g_dol.vbo);
+    if (g_dol.layout) ID3D11InputLayout_Release(g_dol.layout);
+    if (g_dol.ps) ID3D11PixelShader_Release(g_dol.ps);
+    if (g_dol.vs) ID3D11VertexShader_Release(g_dol.vs);
+    memset(&g_dol, 0, sizeof(g_dol));
+}
+
 // ============================== scene registry ==============================
 static const D3D11Scene kScenes[] = {
     {"spin", "D3D11 Cube", spin_init, spin_frame, spin_cleanup},
     {"textured", "D3D11 Textured", tex_init, tex_frame, tex_cleanup},
     {"instanced", "D3D11 Instanced", inst_init, inst_frame, inst_cleanup},
+    {"tess", "D3D11 Tessellation", tess_init, tess_frame, tess_cleanup},
+    {"compute", "D3D11 Compute Particles", comp_init, comp_frame, comp_cleanup},
+    {"dolphin", "D3D11 Dolphin", dol_init, dol_frame, dol_cleanup},
 };
 
 static const D3D11Scene *pick_scene(const char *name) {

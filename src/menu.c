@@ -195,9 +195,12 @@ static void show_dx11_scenes(HWND frame) {
         g_hinst, NULL);
     if (g_ui_font) SendMessage(g_placeholder, WM_SETFONT, (WPARAM)g_ui_font, TRUE);
 
-    static const char *labels[] = {"Spinning cube", "Textured cube", "Instanced (512 cubes)"};
-    static const char *args[] = {"dx11 --scene spin", "dx11 --scene textured",
-                                 "dx11 --scene instanced"};
+    static const char *labels[] = {"Spinning cube",        "Textured cube",
+                                   "Instanced (512 cubes)", "Tessellation (sphere)",
+                                   "Compute particles",     "Dolphin (swim)"};
+    static const char *args[] = {"dx11 --scene spin",      "dx11 --scene textured",
+                                 "dx11 --scene instanced", "dx11 --scene tess",
+                                 "dx11 --scene compute",   "dx11 --scene dolphin"};
     g_cbtn_n = (int)(sizeof(args) / sizeof(args[0]));
     int y = cr.top + 70;
     for (int i = 0; i < g_cbtn_n; i++) {
