@@ -48,6 +48,11 @@ static HWND g_edit_vk;   // GPU Info: Vulkan tab text
 static HWND g_edit_gl;   // GPU Info: OpenGL tab text
 static HWND g_placeholder;
 
+#define ID_CB_FIRST 3000  // content-area buttons (Benchmark view)
+static HWND g_cbtn[4];
+static const char *g_cbtn_arg[4];
+static int g_cbtn_n;
+
 static void get_content_rect(HWND frame, RECT *out) {
     RECT rc;
     GetClientRect(frame, &rc);
@@ -62,6 +67,11 @@ static void destroy_content(void) {
     if (g_edit_gl) { DestroyWindow(g_edit_gl); g_edit_gl = NULL; }
     if (g_tab) { DestroyWindow(g_tab); g_tab = NULL; }
     if (g_placeholder) { DestroyWindow(g_placeholder); g_placeholder = NULL; }
+    for (int i = 0; i < g_cbtn_n; i++) {
+        if (g_cbtn[i]) DestroyWindow(g_cbtn[i]);
+        g_cbtn[i] = NULL;
+    }
+    g_cbtn_n = 0;
 }
 
 static HWND make_report_edit(HWND frame, const RECT *r, const char *text) {
@@ -118,6 +128,33 @@ static void show_placeholder(HWND frame, const char *title, const char *msg) {
     g_placeholder = CreateWindowA("STATIC", msg, WS_CHILD | WS_VISIBLE | SS_LEFT, cr.left, cr.top,
                                   cr.right - cr.left, cr.bottom - cr.top, frame, NULL, g_hinst, NULL);
     if (g_ui_font) SendMessage(g_placeholder, WM_SETFONT, (WPARAM)g_ui_font, TRUE);
+}
+
+static void show_benchmark(HWND frame) {
+    destroy_content();
+    SetWindowTextA(g_header, "Benchmark");
+    RECT cr;
+    get_content_rect(frame, &cr);
+
+    g_placeholder = CreateWindowA(
+        "STATIC",
+        "Pick an API to benchmark (15 seconds). Results pop up (avg / min / max / 1% low FPS)\n"
+        "and per-frame data is saved to AIO-Graphics-Test_bench.csv.",
+        WS_CHILD | WS_VISIBLE | SS_LEFT, cr.left, cr.top, cr.right - cr.left, 56, frame, NULL, g_hinst,
+        NULL);
+    if (g_ui_font) SendMessage(g_placeholder, WM_SETFONT, (WPARAM)g_ui_font, TRUE);
+
+    static const char *labels[] = {"Benchmark:  Vulkan  (15s)", "Benchmark:  OpenGL  (15s)"};
+    static const char *args[] = {"vk --bench 15", "gl --bench 15"};
+    g_cbtn_n = 2;
+    int y = cr.top + 70;
+    for (int i = 0; i < g_cbtn_n; i++) {
+        g_cbtn_arg[i] = args[i];
+        g_cbtn[i] = CreateWindowA("BUTTON", labels[i], WS_CHILD | WS_VISIBLE | BS_PUSHBUTTON, cr.left,
+                                  y, 240, 34, frame, (HMENU)(INT_PTR)(ID_CB_FIRST + i), g_hinst, NULL);
+        if (g_ui_font) SendMessage(g_cbtn[i], WM_SETFONT, (WPARAM)g_ui_font, TRUE);
+        y += 44;
+    }
 }
 
 static void layout_content(HWND frame) {
@@ -181,11 +218,7 @@ static void on_select(HWND frame, int action) {
                              "Available now: Cube (Vulkan), Cube (OpenGL), and GPU Info.");
             break;
         case AIO_MODE_BENCH:
-            launch_cube_window("vk --bench 15");
-            show_placeholder(frame, "Benchmark",
-                             "Running a 15-second Vulkan benchmark in a new window.\n\n"
-                             "When it finishes, a summary pops up (avg / min / max / 1% low FPS)\n"
-                             "and the per-frame data is saved to AIO-Graphics-Test_bench.csv.");
+            show_benchmark(frame);
             break;
         default:
             break;
@@ -211,7 +244,13 @@ static LRESULT CALLBACK shell_wndproc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM
             return 0;
         }
         case WM_COMMAND: {
-            int idx = LOWORD(wParam) - ID_FIRST_BUTTON;
+            int id = LOWORD(wParam);
+            int cb = id - ID_CB_FIRST;
+            if (cb >= 0 && cb < g_cbtn_n) {  // Benchmark-view API buttons
+                launch_cube_window(g_cbtn_arg[cb]);
+                return 0;
+            }
+            int idx = id - ID_FIRST_BUTTON;
             if (idx >= 0 && idx < NITEMS) on_select(hwnd, g_items[idx].action);
             return 0;
         }
