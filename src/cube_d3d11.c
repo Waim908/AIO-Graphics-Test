@@ -165,6 +165,15 @@ typedef HRESULT(WINAPI *PFN_D3DCompile)(LPCVOID, SIZE_T, LPCSTR, const D3D_SHADE
                                         ID3DInclude *, LPCSTR, LPCSTR, UINT, UINT, ID3DBlob **,
                                         ID3DBlob **);
 
+// D3D11CreateDeviceAndSwapChain is loaded dynamically (NOT statically linked) so
+// the whole .exe has no hard import dependency on d3d11.dll / dxgi.dll - those
+// only exist in the container when DXVK is installed, and a static import would
+// stop the exe from launching at all (even the shell) when they're absent.
+typedef HRESULT(WINAPI *PFN_D3D11CreateDeviceAndSwapChain)(
+    IDXGIAdapter *, D3D_DRIVER_TYPE, HMODULE, UINT, const D3D_FEATURE_LEVEL *, UINT, UINT,
+    const DXGI_SWAP_CHAIN_DESC *, IDXGISwapChain **, ID3D11Device **, D3D_FEATURE_LEVEL *,
+    ID3D11DeviceContext **);
+
 static void fail_box(const char *msg) {
     MessageBoxA(NULL, msg, "AIO Graphics Test - Direct3D 11", MB_OK | MB_ICONERROR);
 }
@@ -206,6 +215,19 @@ int aio_run_d3d11_cube(HINSTANCE hinst) {
     scd.SampleDesc.Count = 1;
     scd.Windowed = TRUE;
 
+    HMODULE d3d11lib = LoadLibraryA("d3d11.dll");
+    PFN_D3D11CreateDeviceAndSwapChain p_create =
+        d3d11lib ? (PFN_D3D11CreateDeviceAndSwapChain)GetProcAddress(d3d11lib,
+                                                                     "D3D11CreateDeviceAndSwapChain")
+                 : NULL;
+    if (!p_create) {
+        fail_box(
+            "Direct3D 11 is not available in this container.\n\n"
+            "Could not load d3d11.dll (is DXVK installed?).");
+        DestroyWindow(hwnd);
+        return 1;
+    }
+
     const D3D_FEATURE_LEVEL want[] = {D3D_FEATURE_LEVEL_11_0, D3D_FEATURE_LEVEL_10_1,
                                       D3D_FEATURE_LEVEL_10_0};
     D3D_FEATURE_LEVEL got;
@@ -213,9 +235,9 @@ int aio_run_d3d11_cube(HINSTANCE hinst) {
     ID3D11DeviceContext *ctx = NULL;
     IDXGISwapChain *swap = NULL;
 
-    HRESULT hr = D3D11CreateDeviceAndSwapChain(
-        NULL, D3D_DRIVER_TYPE_HARDWARE, NULL, 0, want, (UINT)(sizeof(want) / sizeof(want[0])),
-        D3D11_SDK_VERSION, &scd, &swap, &dev, &got, &ctx);
+    HRESULT hr = p_create(NULL, D3D_DRIVER_TYPE_HARDWARE, NULL, 0, want,
+                          (UINT)(sizeof(want) / sizeof(want[0])), D3D11_SDK_VERSION, &scd, &swap,
+                          &dev, &got, &ctx);
     if (FAILED(hr)) {
         fail_box(
             "Direct3D 11 is not available in this container.\n\n"
