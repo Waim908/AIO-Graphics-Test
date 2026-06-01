@@ -61,7 +61,9 @@ Vulkan-Loader import lib + glslang → `AIO-Graphics-Test.exe`). Run the **Build
 
 - **v0.1** — ✅ base cube cross-compiles to `AIO-Graphics-Test.exe` (pipeline proven).
 - **v0.2** — ✅ `--gpuinfo` / `--report` (GL + VK dump to console + report file; `GPUInfo.exe` replacement).
-- **v0.3** — `--bench` FPS/frametime/1%-low + CSV. ← current
+- **v0.3** — ✅ in-app start menu (header + buttons; two-level: main + cube-API submenu) and a
+  live FPS + active-API HUD on the Vulkan cube (title bar). The exe greets you with the menu.
+- **v0.4** — `--bench` FPS/frametime/1%-low + CSV, wired into the menu. ← current
 - **v0.4** — native **multi-API render backends** via `--api`, one per build step so each
   cross-compiles green before the next: **gl** (OpenGL via WGL — Zink/wined3d path) →
   **dx11** (DXVK) → **dx12** (VKD3D-Proton) → **dx9** (DXVK d3d9). `dx8` optional last.
