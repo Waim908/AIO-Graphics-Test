@@ -29,6 +29,7 @@
 #include "cube_d3d8.h"
 #include "hud.h"
 #include "bench.h"
+#include "watchdog.h"
 
 static int g_w = 640, g_h = 480;
 static int g_quit;
@@ -239,6 +240,7 @@ int aio_run_d3d8_cube(HINSTANCE hinst) {
     float aspect = (g_h > 0) ? (float)g_w / (float)g_h : 1.0f;
 
     MSG msg;
+    aio_watchdog_start(&frames, 12);
     g_quit = 0;
     while (!g_quit) {
         while (PeekMessage(&msg, NULL, 0, 0, PM_REMOVE)) {
@@ -290,6 +292,8 @@ int aio_run_d3d8_cube(HINSTANCE hinst) {
             last_frame = frames;
         }
     }
+
+    aio_watchdog_stop();
 
     if (bench_on) {
         QueryPerformanceCounter(&prev);

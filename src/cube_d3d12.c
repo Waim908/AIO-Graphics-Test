@@ -37,6 +37,7 @@
 #include "cube_d3d12.h"
 #include "hud.h"
 #include "bench.h"
+#include "watchdog.h"
 
 #define FRAME_COUNT 2
 
@@ -480,6 +481,7 @@ int aio_run_d3d12_cube(HINSTANCE hinst) {
     uint64_t frames = 0, last_frame = 0;
 
     MSG msg;
+    aio_watchdog_start(&frames, 12);
     g_quit = 0;
     while (!g_quit) {
         while (PeekMessage(&msg, NULL, 0, 0, PM_REMOVE)) {
@@ -553,6 +555,8 @@ int aio_run_d3d12_cube(HINSTANCE hinst) {
             last_frame = frames;
         }
     }
+
+    aio_watchdog_stop();
 
     if (bench_on) {
         QueryPerformanceCounter(&prev);

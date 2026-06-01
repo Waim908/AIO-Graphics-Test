@@ -64,6 +64,7 @@
 #include "menu.h"     // AIO Graphics Test: in-app start menu
 #include "bench.h"    // AIO Graphics Test: --bench mode
 #include "hud.h"      // AIO Graphics Test: in-window FPS/API overlay
+#include "watchdog.h" // AIO Graphics Test: hang watchdog (frees a wedged container)
 #include "cube_gl.h"     // AIO Graphics Test: OpenGL cube backend
 #include "cube_d3d11.h"  // AIO Graphics Test: Direct3D 11 (DXVK) cube backend
 #include "cube_d3d12.h"  // AIO Graphics Test: Direct3D 12 (VKD3D) cube backend
@@ -4370,6 +4371,11 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR pCmdLine,
         aio_qpc_prev = aio_qpc_start;
     }
 
+    // Watchdog: bail if rendering wedges (e.g. a hung present), so a broken
+    // stack can't lock up the container.
+    volatile uint64_t aio_wd_ctr = 0;
+    aio_watchdog_start(&aio_wd_ctr, 12);
+
     // main message loop
     while (!done) {
         if (demo.pause) {
@@ -4391,6 +4397,7 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR pCmdLine,
             DispatchMessage(&msg);
         }
         RedrawWindow(demo.window, NULL, NULL, RDW_INTERNALPAINT);
+        aio_wd_ctr = (uint64_t)demo.curFrame;  // watchdog liveness
 
         // Update the FPS HUD ~twice a second.
         ULONGLONG aio_now = GetTickCount64();
@@ -4426,6 +4433,7 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR pCmdLine,
             if (elapsed >= (double)aio_bench_seconds()) done = true;
         }
     }
+    aio_watchdog_stop();
 
     // Benchmark: compute results, write CSV, show summary.
     if (aio_bench_on) {
