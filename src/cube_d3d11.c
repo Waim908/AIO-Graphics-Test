@@ -1309,8 +1309,8 @@ int aio_run_d3d11_cube(HINSTANCE hinst, const char *scene_name) {
     if (bench_on) {
         QueryPerformanceCounter(&prev);
         double total = (double)(prev.QuadPart - start.QuadPart) / (double)qpf.QuadPart;
-        // Benchmark result is keyed by a stable label so the shell can find it.
-        char *res = aio_bench_finish("Direct3D 11", total);
+        // Keyed by the per-scene label so each DX11 scene gets its own result file.
+        char *res = aio_bench_finish(api, total);
         if (res) {
             MessageBoxA(NULL, res, "AIO Graphics Test - Benchmark", MB_OK | MB_ICONINFORMATION);
             free(res);

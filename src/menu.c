@@ -156,25 +156,41 @@ static void show_benchmark(HWND frame) {
         NULL);
     if (g_ui_font) SendMessage(g_placeholder, WM_SETFONT, (WPARAM)g_ui_font, TRUE);
 
-    static const char *labels[] = {"Benchmark:  Vulkan  (15s)", "Benchmark:  OpenGL  (15s)",
-                                   "Benchmark:  Direct3D 11  (15s)"};
-    static const char *args[] = {"vk --bench 15", "gl --bench 15", "dx11 --bench 15"};
-    static const char *apilabels[] = {"Vulkan", "OpenGL", "Direct3D 11"};
-    g_cbtn_n = 3;
-    int y = cr.top + 70;
+    // Each row benchmarks one API/scene for 15s. apilabels MUST match the label
+    // each backend passes to aio_bench_finish (the DX11 ones = scene->label), so
+    // the result file AIO-Graphics-Test_bench_<label>.txt is found.
+    static const char *labels[] = {
+        "Vulkan",           "OpenGL",          "D3D11: Cube",   "D3D11: Instanced",
+        "D3D11: Tessellate", "D3D11: Compute", "D3D11: Dolphin",
+    };
+    static const char *args[] = {
+        "vk --bench 15",
+        "gl --bench 15",
+        "dx11 --scene spin --bench 15",
+        "dx11 --scene instanced --bench 15",
+        "dx11 --scene tess --bench 15",
+        "dx11 --scene compute --bench 15",
+        "dx11 --scene dolphin --bench 15",
+    };
+    static const char *apilabels[] = {
+        "Vulkan",          "OpenGL",         "D3D11 Cube",   "D3D11 Instanced",
+        "D3D11 Tessellation", "D3D11 Compute Particles", "D3D11 Dolphin",
+    };
+    g_cbtn_n = (int)(sizeof(args) / sizeof(args[0]));
+    int y = cr.top + 64;
     for (int i = 0; i < g_cbtn_n; i++) {
         g_cbtn_arg[i] = args[i];
         g_cbtn_label[i] = apilabels[i];
         g_cbtn_proc[i] = NULL;
         g_cbtn[i] = CreateWindowA("BUTTON", labels[i], WS_CHILD | WS_VISIBLE | BS_PUSHBUTTON, cr.left,
-                                  y, 240, 34, frame, (HMENU)(INT_PTR)(ID_CB_FIRST + i), g_hinst, NULL);
+                                  y, 200, 30, frame, (HMENU)(INT_PTR)(ID_CB_FIRST + i), g_hinst, NULL);
         if (g_ui_font) SendMessage(g_cbtn[i], WM_SETFONT, (WPARAM)g_ui_font, TRUE);
         // Result label to the right of the button (filled in when the run finishes).
         g_cbtn_result[i] =
-            CreateWindowA("STATIC", "", WS_CHILD | WS_VISIBLE | SS_LEFT, cr.left + 252, y + 8,
-                          (cr.right - (cr.left + 252)), 26, frame, NULL, g_hinst, NULL);
+            CreateWindowA("STATIC", "", WS_CHILD | WS_VISIBLE | SS_LEFT, cr.left + 212, y + 6,
+                          (cr.right - (cr.left + 212)), 24, frame, NULL, g_hinst, NULL);
         if (g_ui_font) SendMessage(g_cbtn_result[i], WM_SETFONT, (WPARAM)g_ui_font, TRUE);
-        y += 44;
+        y += 38;
     }
 }
 
