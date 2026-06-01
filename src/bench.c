@@ -19,12 +19,20 @@ static size_t g_n;     // sample count
 static size_t g_cap;   // capacity
 static int g_seconds;  // requested duration
 static int g_active;
+static int g_warmup;   // first frames to discard (pipeline/swapchain warm-up)
+
+// Frames faster than this (ms) are measurement artifacts, not real rendered
+// frames (a windowed Present alone costs more than this), so they're dropped to
+// keep Max FPS meaningful. 0.02 ms == 50000 FPS, well above any real result.
+#define AIO_BENCH_MIN_FT_MS 0.02
+#define AIO_BENCH_WARMUP_FRAMES 3
 
 void aio_bench_begin(int seconds) {
     g_seconds = seconds;
     g_active = 1;
     g_n = 0;
     g_cap = 4096;
+    g_warmup = AIO_BENCH_WARMUP_FRAMES;
     g_ft = (double *)malloc(g_cap * sizeof(double));
 }
 
@@ -33,6 +41,11 @@ int aio_bench_seconds(void) { return g_seconds; }
 
 void aio_bench_add(double frame_ms) {
     if (!g_active || !g_ft || frame_ms <= 0.0) return;
+    if (g_warmup > 0) {  // discard warm-up frames (huge or near-zero first frames)
+        g_warmup--;
+        return;
+    }
+    if (frame_ms < AIO_BENCH_MIN_FT_MS) return;  // drop impossible sub-frame outliers
     if (g_n >= g_cap) {
         size_t nc = g_cap * 2;
         double *p = (double *)realloc(g_ft, nc * sizeof(double));
