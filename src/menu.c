@@ -17,8 +17,8 @@
 #include "menu.h"
 #include "gpuinfo.h"
 
-#define SB_W 210
-#define HEADER_H 34
+#define SB_W 150
+#define HEADER_H 26
 #define ID_FIRST_BUTTON 1000
 #define ID_TAB 2000
 
@@ -190,8 +190,8 @@ static LRESULT CALLBACK shell_wndproc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM
         case WM_CREATE: {
             for (int i = 0; i < NITEMS; i++) {
                 g_sidebar[i] = CreateWindowA("BUTTON", g_items[i].label,
-                                             WS_CHILD | WS_VISIBLE | BS_PUSHBUTTON, 10, 10 + i * 48,
-                                             SB_W - 20, 40, hwnd, (HMENU)(INT_PTR)(ID_FIRST_BUTTON + i),
+                                             WS_CHILD | WS_VISIBLE | BS_PUSHBUTTON, 6, 6 + i * 30,
+                                             SB_W - 12, 26, hwnd, (HMENU)(INT_PTR)(ID_FIRST_BUTTON + i),
                                              g_hinst, NULL);
                 if (g_ui_font) SendMessage(g_sidebar[i], WM_SETFONT, (WPARAM)g_ui_font, TRUE);
             }
@@ -240,13 +240,13 @@ int aio_run_shell(HINSTANCE hInstance) {
     icc.dwICC = ICC_TAB_CLASSES | ICC_STANDARD_CLASSES;
     InitCommonControlsEx(&icc);
 
-    g_ui_font = CreateFontA(20, 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE, DEFAULT_CHARSET,
+    g_ui_font = CreateFontA(13, 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE, DEFAULT_CHARSET,
                             OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, DEFAULT_QUALITY,
                             DEFAULT_PITCH | FF_SWISS, "Segoe UI");
-    g_header_font = CreateFontA(28, 0, 0, 0, FW_BOLD, FALSE, FALSE, FALSE, DEFAULT_CHARSET,
+    g_header_font = CreateFontA(18, 0, 0, 0, FW_BOLD, FALSE, FALSE, FALSE, DEFAULT_CHARSET,
                                 OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, DEFAULT_QUALITY,
                                 DEFAULT_PITCH | FF_SWISS, "Segoe UI");
-    g_mono_font = CreateFontA(16, 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE, DEFAULT_CHARSET,
+    g_mono_font = CreateFontA(13, 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE, DEFAULT_CHARSET,
                               OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, DEFAULT_QUALITY,
                               FIXED_PITCH | FF_MODERN, "Consolas");
 
@@ -260,7 +260,7 @@ int aio_run_shell(HINSTANCE hInstance) {
     wc.lpszClassName = cls;
     RegisterClassA(&wc);
 
-    int w = 980, h = 680;
+    int w = 680, h = 480;
     int sx = (GetSystemMetrics(SM_CXSCREEN) - w) / 2;
     int sy = (GetSystemMetrics(SM_CYSCREEN) - h) / 2;
     if (sx < 0) sx = 0;

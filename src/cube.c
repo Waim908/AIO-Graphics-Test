@@ -4277,7 +4277,9 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR pCmdLine,
         return rc;
     }
 
-    demo_init(&demo, argc, argv);
+    // Don't pass AIO shell flags (--cube / <api> / --no-menu) to the cube's own
+    // argument parser, or it errors with a usage dump. argc=1 = program name only.
+    demo_init(&demo, 1, argv);
 
     // Free up the items we had to allocate for the command line arguments.
     if (argc > 0 && argv != NULL) {
