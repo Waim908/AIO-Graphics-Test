@@ -153,10 +153,11 @@ static void show_benchmark(HWND frame) {
         NULL);
     if (g_ui_font) SendMessage(g_placeholder, WM_SETFONT, (WPARAM)g_ui_font, TRUE);
 
-    static const char *labels[] = {"Benchmark:  Vulkan  (15s)", "Benchmark:  OpenGL  (15s)"};
-    static const char *args[] = {"vk --bench 15", "gl --bench 15"};
-    static const char *apilabels[] = {"Vulkan", "OpenGL"};
-    g_cbtn_n = 2;
+    static const char *labels[] = {"Benchmark:  Vulkan  (15s)", "Benchmark:  OpenGL  (15s)",
+                                   "Benchmark:  Direct3D 11  (15s)"};
+    static const char *args[] = {"vk --bench 15", "gl --bench 15", "dx11 --bench 15"};
+    static const char *apilabels[] = {"Vulkan", "OpenGL", "Direct3D 11"};
+    g_cbtn_n = 3;
     int y = cr.top + 70;
     for (int i = 0; i < g_cbtn_n; i++) {
         g_cbtn_arg[i] = args[i];
@@ -234,12 +235,19 @@ static void on_select(HWND frame, int action) {
                              "The menu stays here - switch back any time, or launch another test.");
             break;
         }
+        case AIO_MODE_CUBE_DX11: {
+            HANDLE h = launch_cube_window("dx11");
+            if (h) CloseHandle(h);
+            show_placeholder(frame, "Cube - Direct3D 11",
+                             "Launched the Direct3D 11 cube in a new window (tests the DXVK path).\n\n"
+                             "The menu stays here - switch back any time, or launch another test.");
+            break;
+        }
         case AIO_MODE_CUBE_DX9:
-        case AIO_MODE_CUBE_DX11:
         case AIO_MODE_CUBE_DX12:
             show_placeholder(frame, "Cube",
                              "This graphics API backend is coming in a future version.\n\n"
-                             "Available now: Cube (Vulkan), Cube (OpenGL), and GPU Info.");
+                             "Available now: Cube (Vulkan), Cube (OpenGL), Cube (Direct3D 11), and GPU Info.");
             break;
         case AIO_MODE_BENCH:
             show_benchmark(frame);

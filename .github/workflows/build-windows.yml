@@ -51,13 +51,13 @@ jobs:
 
       - name: Cross-compile AIO-Graphics-Test.exe
         run: |
-          x86_64-w64-mingw32-gcc src/cube.c src/gpuinfo.c src/menu.c src/bench.c src/hud.c src/cube_gl.c \
+          x86_64-w64-mingw32-gcc src/cube.c src/gpuinfo.c src/menu.c src/bench.c src/hud.c src/cube_gl.c src/cube_d3d11.c \
             -I src -I vk/include \
             -DVK_USE_PLATFORM_WIN32_KHR -DWIN32_LEAN_AND_MEAN \
             -O2 -mwindows \
             -L vk/lib \
             -o AIO-Graphics-Test.exe \
-            -lvulkan-1 -lgdi32 -luser32 -lopengl32 -lcomctl32
+            -lvulkan-1 -lgdi32 -luser32 -lopengl32 -lcomctl32 -ld3d11 -ldxgi -ldxguid
           file AIO-Graphics-Test.exe
 
       - name: Upload artifact

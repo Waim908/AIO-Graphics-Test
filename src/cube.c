@@ -64,7 +64,8 @@
 #include "menu.h"     // AIO Graphics Test: in-app start menu
 #include "bench.h"    // AIO Graphics Test: --bench mode
 #include "hud.h"      // AIO Graphics Test: in-window FPS/API overlay
-#include "cube_gl.h"  // AIO Graphics Test: OpenGL cube backend
+#include "cube_gl.h"     // AIO Graphics Test: OpenGL cube backend
+#include "cube_d3d11.h"  // AIO Graphics Test: Direct3D 11 (DXVK) cube backend
 #endif
 #define MILLION 1000000L
 #define BILLION 1000000000L
@@ -4275,10 +4276,15 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR pCmdLine,
             AIO_FREE_ARGV();
             return rc;
         }
+        if (strcmp(api, "dx11") == 0) {
+            int rc = aio_run_d3d11_cube(hInstance);
+            AIO_FREE_ARGV();
+            return rc;
+        }
         if (strcmp(api, "vk") != 0) {
             MessageBoxA(NULL,
                         "This graphics API backend is coming in a future version.\n\n"
-                        "Available now: Cube (Vulkan) and Cube (OpenGL).",
+                        "Available now: Cube (Vulkan), Cube (OpenGL), and Cube (Direct3D 11).",
                         "AIO Graphics Test", MB_OK | MB_ICONINFORMATION);
             AIO_FREE_ARGV();
             return 0;
