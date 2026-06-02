@@ -47,21 +47,6 @@ jobs:
           cmake -S vh -B vh/build -DCMAKE_INSTALL_PREFIX=$PWD/vk
           cmake --install vh/build
 
-      - name: Generate vulkan-1 import lib (dlltool from .def)
-        run: |
-          # The real vulkan-1.dll is provided by Wine/DXVK at runtime in the container;
-          # we only need an import lib to link against. Use the loader's published export
-          # list (vulkan-1.def) -> libvulkan-1.a via mingw dlltool. No loader compile.
-          mkdir -p vk/lib
-          curl -sL -o vulkan-1.def \
-            https://raw.githubusercontent.com/KhronosGroup/Vulkan-Loader/sdk-1.3.239.0/loader/vulkan-1.def
-          head -3 vulkan-1.def; echo "... ($(wc -l < vulkan-1.def) lines)"
-          ${{ matrix.prefix }}-dlltool \
-            --input-def vulkan-1.def \
-            --dllname vulkan-1.dll \
-            --output-lib vk/lib/libvulkan-1.a
-          ls -l vk/lib/libvulkan-1.a
-
       - name: Compile shaders to SPIR-V C headers
         run: |
           glslangValidator -V -x -o src/cube.vert.inc src/cube.vert
@@ -70,21 +55,50 @@ jobs:
       - name: Compile resources (app icon)
         run: ${{ matrix.prefix }}-windres -I src src/app.rc -o app_res.o
 
-      - name: Cross-compile ${{ matrix.out }}
+      - name: Compile objects
         run: |
-          # --enable-stdcall-fixup: on 32-bit (i686) the Vulkan calls are __stdcall
-          # so the compiler emits decorated refs (vkCreateInstance@12), but the
-          # import lib generated from vulkan-1.def carries the undecorated names the
-          # real 32-bit vulkan-1.dll exports. The fixup maps foo@N -> foo. No-op on
-          # x86_64 (no stdcall decoration there).
-          ${{ matrix.prefix }}-gcc src/cube.c src/gpuinfo.c src/menu.c src/bench.c src/hud.c src/cube_gl.c src/cube_d3d11.c src/cube_d3d12.c src/cube_d3d10.c src/cube_d3d9.c src/cube_d3d8.c src/cube_ddraw.c src/watchdog.c app_res.o \
-            -I src -I vk/include \
-            -DVK_USE_PLATFORM_WIN32_KHR -DWIN32_LEAN_AND_MEAN \
-            -O2 -mwindows \
+          for f in cube gpuinfo menu bench hud cube_gl cube_d3d11 cube_d3d12 \
+                   cube_d3d10 cube_d3d9 cube_d3d8 cube_ddraw watchdog; do
+            ${{ matrix.prefix }}-gcc -c src/$f.c \
+              -I src -I vk/include \
+              -DVK_USE_PLATFORM_WIN32_KHR -DWIN32_LEAN_AND_MEAN \
+              -O2 -o $f.o
+          done
+
+      - name: Build vulkan-1 import lib from the symbols actually referenced
+        run: |
+          # The real vulkan-1.dll is provided by Wine/DXVK at runtime; we only need
+          # an import lib to link against. Derive the export list from the objects'
+          # own undefined vk* references so the decoration matches exactly: on i686
+          # those are __stdcall-decorated (vkCreateInstance@12), on x86_64 plain.
+          # dlltool --kill-at then strips the @N from the DLL *import* name (the real
+          # 32-bit vulkan-1.dll exports undecorated names) while keeping the decorated
+          # symbol the linker resolves against. No-op effect on x86_64.
+          mkdir -p vk/lib
+          echo "EXPORTS" > vulkan-1.def
+          ${{ matrix.prefix }}-nm *.o \
+            | awk '/ U / {print $2}' \
+            | sed 's/^_//' \
+            | grep '^vk' \
+            | sort -u >> vulkan-1.def
+          echo "---- vulkan-1.def ($(($(wc -l < vulkan-1.def) - 1)) exports) ----"
+          head -6 vulkan-1.def
+          ${{ matrix.prefix }}-dlltool \
+            --input-def vulkan-1.def \
+            --dllname vulkan-1.dll \
+            --output-lib vk/lib/libvulkan-1.a \
+            --kill-at
+          ls -l vk/lib/libvulkan-1.a
+
+      - name: Link ${{ matrix.out }}
+        run: |
+          ${{ matrix.prefix }}-gcc \
+            cube.o gpuinfo.o menu.o bench.o hud.o cube_gl.o cube_d3d11.o cube_d3d12.o \
+            cube_d3d10.o cube_d3d9.o cube_d3d8.o cube_ddraw.o watchdog.o app_res.o \
+            -mwindows \
             -L vk/lib \
             -o ${{ matrix.out }} \
-            -lvulkan-1 -lgdi32 -luser32 -lopengl32 -lcomctl32 -ldxguid \
-            -Wl,--enable-stdcall-fixup
+            -lvulkan-1 -lgdi32 -luser32 -lopengl32 -lcomctl32 -ldxguid
           file ${{ matrix.out }}
 
       - name: Upload artifact
