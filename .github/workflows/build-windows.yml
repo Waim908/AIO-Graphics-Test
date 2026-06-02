@@ -62,6 +62,7 @@ jobs:
             ${{ matrix.prefix }}-gcc -c src/$f.c \
               -I src -I vk/include \
               -DVK_USE_PLATFORM_WIN32_KHR -DWIN32_LEAN_AND_MEAN \
+              -D_WIN32_WINNT=0x0A00 \
               -O2 -o $f.o
           done
 
