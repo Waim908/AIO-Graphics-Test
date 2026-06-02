@@ -60,9 +60,24 @@ void aio_hud_update(HWND render_window, const char *text) {
     if (!g_hud) return;
     strncpy(g_hud_text, text, sizeof(g_hud_text) - 1);
     g_hud_text[sizeof(g_hud_text) - 1] = '\0';
+
+    // Size the bar to the text so long labels (e.g. "D3D11 Compute Particles
+    // 1122 FPS") aren't clipped. Paint draws at an 8px left margin, so leave
+    // 8 left + 16 right padding around the measured text width.
+    int w = 260;
+    HDC mdc = GetDC(g_hud);
+    if (mdc) {
+        HFONT old = g_hud_font ? (HFONT)SelectObject(mdc, g_hud_font) : NULL;
+        SIZE sz;
+        if (GetTextExtentPoint32A(mdc, g_hud_text, (int)strlen(g_hud_text), &sz))
+            w = sz.cx + 24;
+        if (old) SelectObject(mdc, old);
+        ReleaseDC(g_hud, mdc);
+    }
+
     POINT p = {8, 8};
     ClientToScreen(render_window, &p);
-    SetWindowPos(g_hud, HWND_TOPMOST, p.x, p.y, 260, 32, SWP_NOACTIVATE | SWP_SHOWWINDOW);
+    SetWindowPos(g_hud, HWND_TOPMOST, p.x, p.y, w, 32, SWP_NOACTIVATE | SWP_SHOWWINDOW);
     InvalidateRect(g_hud, NULL, TRUE);
     UpdateWindow(g_hud);
 }
