@@ -289,18 +289,18 @@ static void show_benchmark(HWND frame) {
         "Vulkan",            "OpenGL",         "DDraw: D3D7",    "DDraw: 2D Blit",
         "D3D8: Cube",        "D3D9: Cube",     "D3D10: Cube",
         "D3D11: Cube",       "D3D11: Instanced", "D3D11: Tessellate", "D3D11: Compute",
-        "D3D11: Dolphin",    "D3D12: Cube",
+        "D3D11: Dolphin",    "D3D11: Raymarch", "D3D12: Cube",
     };
     static const char *args[] = {
         "vk", "gl", "dx7", "ddraw2d", "dx8", "dx9", "dx10", "dx11 --scene spin",
         "dx11 --scene instanced", "dx11 --scene tess", "dx11 --scene compute",
-        "dx11 --scene dolphin", "dx12",
+        "dx11 --scene dolphin", "dx11 --scene raymarch", "dx12",
     };
     static const char *apilabels[] = {
         "Vulkan",          "OpenGL",         "Direct3D 7 (DirectDraw)", "DirectDraw 2D",
         "Direct3D 8",      "Direct3D 9",     "Direct3D 10",
         "D3D11 Cube",      "D3D11 Instanced", "D3D11 Tessellation", "D3D11 Compute Particles",
-        "D3D11 Dolphin",   "Direct3D 12",
+        "D3D11 Dolphin",   "D3D11 Raymarch SDF", "Direct3D 12",
     };
     g_cbtn_n = (int)(sizeof(args) / sizeof(args[0]));
     int y = cr.top + 86;
@@ -344,10 +344,12 @@ static void show_dx11_scenes(HWND frame) {
 
     static const char *labels[] = {"Spinning cube",        "Textured cube",
                                    "Instanced (512 cubes)", "Tessellation (sphere)",
-                                   "Compute particles",     "Dolphin (swim)"};
+                                   "Compute particles",     "Dolphin (swim)",
+                                   "Raymarch SDF (shader)"};
     static const char *args[] = {"dx11 --scene spin",      "dx11 --scene textured",
                                  "dx11 --scene instanced", "dx11 --scene tess",
-                                 "dx11 --scene compute",   "dx11 --scene dolphin"};
+                                 "dx11 --scene compute",   "dx11 --scene dolphin",
+                                 "dx11 --scene raymarch"};
     g_cbtn_n = (int)(sizeof(args) / sizeof(args[0]));
     int y = cr.top + 70;
     for (int i = 0; i < g_cbtn_n; i++) {

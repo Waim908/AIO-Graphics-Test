@@ -1230,6 +1230,127 @@ static void dol_cleanup(void) {
     memset(&g_dol, 0, sizeof(g_dol));
 }
 
+// ============================== RAYMARCH scene ==============================
+// An original signed-distance-field scene ray-marched entirely in the pixel
+// shader over a single fullscreen triangle (no vertex/index buffers). A rotating
+// torus and four orbiting spheres are blended with a smooth-min onto a ground
+// plane, then lit with a key light + soft ray-marched shadows + cheap AO + fog.
+// All procedural / original content -- this doubles as a fragment-shader (ALU)
+// stress test. The VS builds the fullscreen triangle from SV_VertexID and passes
+// clip-space xy; the PS does all the work. Only iTime + aspect feed in, so it is
+// resolution-independent.
+static const char *kRaymarchHLSL =
+    "cbuffer CB : register(b0) { float iTime; float iAspect; float2 pad; };\n"
+    "struct VSOut { float4 pos : SV_POSITION; float2 ndc : TEXCOORD0; };\n"
+    "VSOut VSMain(uint vid : SV_VertexID) {\n"
+    "  VSOut o; float2 p = float2((vid << 1) & 2, vid & 2);\n"
+    "  o.pos = float4(p * 2.0 - 1.0, 0.0, 1.0); o.ndc = o.pos.xy; return o;\n"
+    "}\n"
+    "float2 rot(float2 v, float a){ float s=sin(a),c=cos(a); return float2(v.x*c-v.y*s, v.x*s+v.y*c); }\n"
+    "float sdSphere(float3 p, float r){ return length(p)-r; }\n"
+    "float sdTorus(float3 p, float2 t){ float2 q=float2(length(p.xz)-t.x, p.y); return length(q)-t.y; }\n"
+    "float smin(float a, float b, float k){ float h=saturate(0.5+0.5*(b-a)/k); return lerp(b,a,h)-k*h*(1.0-h); }\n"
+    "float map(float3 p){\n"
+    "  float3 q = p; q.xz = rot(q.xz, iTime*0.5);\n"
+    "  float obj = sdTorus(q, float2(1.5, 0.45));\n"
+    "  [unroll] for (int i=0;i<4;i++){ float a=iTime*0.8 + i*1.5707963;\n"
+    "    float3 c=float3(cos(a)*1.9, sin(iTime+i)*0.6, sin(a)*1.9);\n"
+    "    obj = smin(obj, sdSphere(p-c, 0.55), 0.55); }\n"
+    "  float ground = p.y + 1.3;\n"
+    "  return min(obj, ground);\n"
+    "}\n"
+    "float3 calcN(float3 p){ float2 e=float2(0.0012,0.0);\n"
+    "  return normalize(float3(map(p+e.xyy)-map(p-e.xyy), map(p+e.yxy)-map(p-e.yxy), map(p+e.yyx)-map(p-e.yyx))); }\n"
+    "float shadow(float3 ro, float3 rd){ float res=1.0, t=0.05;\n"
+    "  [loop] for(int i=0;i<32;i++){ float h=map(ro+rd*t); if(h<0.001) return 0.0;\n"
+    "    res=min(res, 8.0*h/t); t+=clamp(h,0.02,0.3); if(t>20.0) break; } return saturate(res); }\n"
+    "float4 PSMain(VSOut inp) : SV_TARGET {\n"
+    "  float2 uv = inp.ndc; uv.x *= iAspect;\n"
+    "  float3 ro = float3(0.0, 1.6, 5.6);\n"
+    "  float3 fw = normalize(float3(0.0,-0.2,0.0) - ro);\n"
+    "  float3 rt = normalize(cross(float3(0.0,1.0,0.0), fw)); float3 up = cross(fw, rt);\n"
+    "  float3 rd = normalize(uv.x*rt + uv.y*up + 1.7*fw);\n"
+    "  float t = 0.0; int steps = 0;\n"
+    "  [loop] for(int i=0;i<96;i++){ steps=i; float d=map(ro+rd*t); if(d<0.001) break; t+=d; if(t>40.0) break; }\n"
+    "  float3 col;\n"
+    "  if (t < 40.0) {\n"
+    "    float3 p = ro+rd*t; float3 n = calcN(p);\n"
+    "    float3 lp = normalize(float3(0.7,0.85,0.35));\n"
+    "    float dif = saturate(dot(n, lp)); float sh = shadow(p+n*0.02, lp);\n"
+    "    float ao = 1.0 - (float)steps/96.0;\n"
+    "    float3 base = 0.5 + 0.5*cos(float3(0.0,2.0,4.0) + p.y*0.6 + iTime*0.2);\n"
+    "    col = base*(0.22 + dif*sh);\n"
+    "    float3 hv = normalize(lp - rd); col += pow(saturate(dot(n,hv)), 32.0)*sh*0.7;\n"
+    "    col *= 0.55 + 0.45*ao;\n"
+    "    col = lerp(col, float3(0.5,0.65,0.85), 1.0 - exp(-0.0008*t*t*t));\n"
+    "  } else {\n"
+    "    col = lerp(float3(0.55,0.70,0.95), float3(0.12,0.18,0.32), saturate(rd.y + 0.25));\n"
+    "  }\n"
+    "  col = pow(saturate(col), 1.0/2.2);\n"
+    "  return float4(col, 1.0);\n"
+    "}\n";
+
+typedef struct {
+    float iTime;
+    float iAspect;
+    float pad0, pad1;
+} RayCB;
+
+static struct {
+    ID3D11VertexShader *vs;
+    ID3D11PixelShader *ps;
+    ID3D11Buffer *cbo;
+} g_ray;
+
+static int ray_init(ID3D11Device *dev, ID3D11DeviceContext *ctx, int w, int h) {
+    (void)ctx;
+    (void)w;
+    (void)h;
+    ID3DBlob *vsb = compile_hlsl(kRaymarchHLSL, "VSMain", "vs_4_0");
+    ID3DBlob *psb = compile_hlsl(kRaymarchHLSL, "PSMain", "ps_4_0");
+    if (!vsb || !psb) return 1;
+    ID3D11Device_CreateVertexShader(dev, ID3D10Blob_GetBufferPointer(vsb),
+                                    ID3D10Blob_GetBufferSize(vsb), NULL, &g_ray.vs);
+    ID3D11Device_CreatePixelShader(dev, ID3D10Blob_GetBufferPointer(psb),
+                                   ID3D10Blob_GetBufferSize(psb), NULL, &g_ray.ps);
+    ID3D10Blob_Release(vsb);
+    ID3D10Blob_Release(psb);
+
+    D3D11_BUFFER_DESC cbd;
+    memset(&cbd, 0, sizeof(cbd));
+    cbd.ByteWidth = sizeof(RayCB);
+    cbd.Usage = D3D11_USAGE_DYNAMIC;
+    cbd.BindFlags = D3D11_BIND_CONSTANT_BUFFER;
+    cbd.CPUAccessFlags = D3D11_CPU_ACCESS_WRITE;
+    ID3D11Device_CreateBuffer(dev, &cbd, NULL, &g_ray.cbo);
+    return (g_ray.vs && g_ray.ps && g_ray.cbo) ? 0 : 1;
+}
+
+static void ray_frame(ID3D11DeviceContext *ctx, double t, float aspect) {
+    D3D11_MAPPED_SUBRESOURCE m;
+    if (SUCCEEDED(ID3D11DeviceContext_Map(ctx, (ID3D11Resource *)g_ray.cbo, 0,
+                                          D3D11_MAP_WRITE_DISCARD, 0, &m))) {
+        RayCB *cb = (RayCB *)m.pData;
+        cb->iTime = (float)t;
+        cb->iAspect = aspect;
+        cb->pad0 = cb->pad1 = 0.0f;
+        ID3D11DeviceContext_Unmap(ctx, (ID3D11Resource *)g_ray.cbo, 0);
+    }
+    ID3D11DeviceContext_IASetInputLayout(ctx, NULL);
+    ID3D11DeviceContext_IASetPrimitiveTopology(ctx, D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
+    ID3D11DeviceContext_VSSetShader(ctx, g_ray.vs, NULL, 0);
+    ID3D11DeviceContext_PSSetShader(ctx, g_ray.ps, NULL, 0);
+    ID3D11DeviceContext_PSSetConstantBuffers(ctx, 0, 1, &g_ray.cbo);
+    ID3D11DeviceContext_Draw(ctx, 3, 0);
+}
+
+static void ray_cleanup(void) {
+    if (g_ray.cbo) ID3D11Buffer_Release(g_ray.cbo);
+    if (g_ray.ps) ID3D11PixelShader_Release(g_ray.ps);
+    if (g_ray.vs) ID3D11VertexShader_Release(g_ray.vs);
+    memset(&g_ray, 0, sizeof(g_ray));
+}
+
 // ============================== scene registry ==============================
 static const D3D11Scene kScenes[] = {
     {"spin", "D3D11 Cube", spin_init, spin_frame, spin_cleanup},
@@ -1238,6 +1359,7 @@ static const D3D11Scene kScenes[] = {
     {"tess", "D3D11 Tessellation", tess_init, tess_frame, tess_cleanup},
     {"compute", "D3D11 Compute Particles", comp_init, comp_frame, comp_cleanup},
     {"dolphin", "D3D11 Dolphin", dol_init, dol_frame, dol_cleanup},
+    {"raymarch", "D3D11 Raymarch SDF", ray_init, ray_frame, ray_cleanup},
 };
 
 static const D3D11Scene *pick_scene(const char *name) {
