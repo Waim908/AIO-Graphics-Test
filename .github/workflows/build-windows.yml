@@ -20,15 +20,15 @@ jobs:
           - arch: x86_64
             prefix: x86_64-w64-mingw32
             apt: gcc-mingw-w64-x86-64 g++-mingw-w64-x86-64
-            out: AIO-Graphics-Test.exe
-            artifact: windows-x86_64
+            out: AIO-Graphics-Test-64bit.exe
+            artifact: windows-64bit
           # 32-bit: loads the container's *x32* DXVK / VKD3D / ddraw DLL set -
           # the bitness almost every legacy DirectX (DX5/6/7/8/9) game runs as.
           - arch: i686
             prefix: i686-w64-mingw32
             apt: gcc-mingw-w64-i686 g++-mingw-w64-i686
-            out: AIO-Graphics-Test-x86.exe
-            artifact: windows-x86
+            out: AIO-Graphics-Test-32bit.exe
+            artifact: windows-32bit
     name: build-${{ matrix.arch }}
     steps:
       - uses: actions/checkout@v4
