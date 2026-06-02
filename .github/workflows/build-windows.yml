@@ -72,13 +72,19 @@ jobs:
 
       - name: Cross-compile ${{ matrix.out }}
         run: |
+          # --enable-stdcall-fixup: on 32-bit (i686) the Vulkan calls are __stdcall
+          # so the compiler emits decorated refs (vkCreateInstance@12), but the
+          # import lib generated from vulkan-1.def carries the undecorated names the
+          # real 32-bit vulkan-1.dll exports. The fixup maps foo@N -> foo. No-op on
+          # x86_64 (no stdcall decoration there).
           ${{ matrix.prefix }}-gcc src/cube.c src/gpuinfo.c src/menu.c src/bench.c src/hud.c src/cube_gl.c src/cube_d3d11.c src/cube_d3d12.c src/cube_d3d10.c src/cube_d3d9.c src/cube_d3d8.c src/cube_ddraw.c src/watchdog.c app_res.o \
             -I src -I vk/include \
             -DVK_USE_PLATFORM_WIN32_KHR -DWIN32_LEAN_AND_MEAN \
             -O2 -mwindows \
             -L vk/lib \
             -o ${{ matrix.out }} \
-            -lvulkan-1 -lgdi32 -luser32 -lopengl32 -lcomctl32 -ldxguid
+            -lvulkan-1 -lgdi32 -luser32 -lopengl32 -lcomctl32 -ldxguid \
+            -Wl,--enable-stdcall-fixup
           file ${{ matrix.out }}
 
       - name: Upload artifact
