@@ -1300,6 +1300,7 @@ static struct {
     ID3D11VertexShader *vs;
     ID3D11PixelShader *ps;
     ID3D11Buffer *cbo;
+    ID3D11RasterizerState *rs;
 } g_ray;
 
 static int ray_init(ID3D11Device *dev, ID3D11DeviceContext *ctx, int w, int h) {
@@ -1323,7 +1324,17 @@ static int ray_init(ID3D11Device *dev, ID3D11DeviceContext *ctx, int w, int h) {
     cbd.BindFlags = D3D11_BIND_CONSTANT_BUFFER;
     cbd.CPUAccessFlags = D3D11_CPU_ACCESS_WRITE;
     ID3D11Device_CreateBuffer(dev, &cbd, NULL, &g_ray.cbo);
-    return (g_ray.vs && g_ray.ps && g_ray.cbo) ? 0 : 1;
+
+    // The fullscreen triangle covers the screen regardless of winding; disable
+    // culling so it is never back-face culled (the runner sets no rasterizer
+    // state, so the default CULL_BACK would otherwise discard a CCW triangle).
+    D3D11_RASTERIZER_DESC rd;
+    memset(&rd, 0, sizeof(rd));
+    rd.FillMode = D3D11_FILL_SOLID;
+    rd.CullMode = D3D11_CULL_NONE;
+    rd.DepthClipEnable = TRUE;
+    ID3D11Device_CreateRasterizerState(dev, &rd, &g_ray.rs);
+    return (g_ray.vs && g_ray.ps && g_ray.cbo && g_ray.rs) ? 0 : 1;
 }
 
 static void ray_frame(ID3D11DeviceContext *ctx, double t, float aspect) {
@@ -1336,6 +1347,7 @@ static void ray_frame(ID3D11DeviceContext *ctx, double t, float aspect) {
         cb->pad0 = cb->pad1 = 0.0f;
         ID3D11DeviceContext_Unmap(ctx, (ID3D11Resource *)g_ray.cbo, 0);
     }
+    ID3D11DeviceContext_RSSetState(ctx, g_ray.rs);
     ID3D11DeviceContext_IASetInputLayout(ctx, NULL);
     ID3D11DeviceContext_IASetPrimitiveTopology(ctx, D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
     ID3D11DeviceContext_VSSetShader(ctx, g_ray.vs, NULL, 0);
@@ -1345,6 +1357,7 @@ static void ray_frame(ID3D11DeviceContext *ctx, double t, float aspect) {
 }
 
 static void ray_cleanup(void) {
+    if (g_ray.rs) ID3D11RasterizerState_Release(g_ray.rs);
     if (g_ray.cbo) ID3D11Buffer_Release(g_ray.cbo);
     if (g_ray.ps) ID3D11PixelShader_Release(g_ray.ps);
     if (g_ray.vs) ID3D11VertexShader_Release(g_ray.vs);
