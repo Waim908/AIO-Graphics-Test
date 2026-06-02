@@ -30,7 +30,9 @@ typedef struct {
 
 static SbItem g_items[] = {
     {"Cube  -  Vulkan", AIO_MODE_CUBE_VK},     {"Cube  -  OpenGL", AIO_MODE_CUBE_GL},
+    {"Cube  -  DirectDraw", AIO_MODE_CUBE_DDRAW},
     {"Cube  -  Direct3D 8", AIO_MODE_CUBE_DX8}, {"Cube  -  Direct3D 9", AIO_MODE_CUBE_DX9},
+    {"Cube  -  Direct3D 10", AIO_MODE_CUBE_DX10},
     {"Cube  -  Direct3D 11", AIO_MODE_CUBE_DX11}, {"Cube  -  Direct3D 12", AIO_MODE_CUBE_DX12},
     {"GPU Info", AIO_MODE_GPUINFO},
     {"Benchmark", AIO_MODE_BENCH},             {"Semaphore Probe", AIO_MODE_SEMAPHORE},
@@ -55,7 +57,7 @@ static HWND g_edit_gl;   // GPU Info: OpenGL tab text
 static HWND g_placeholder;
 
 #define ID_CB_FIRST 3000  // content-area buttons (Benchmark + scene-picker views)
-#define MAX_CB 12
+#define MAX_CB 16
 static HWND g_cbtn[MAX_CB];
 static HWND g_cbtn_avg[MAX_CB];      // bold "Avg N" label next to each benchmark button
 static HWND g_cbtn_result[MAX_CB];   // "Min N   Max N" label next to each benchmark button
@@ -284,17 +286,19 @@ static void show_benchmark(HWND frame) {
     // apilabels MUST match the label each backend passes to aio_bench_finish (the
     // DX11 ones = scene->label); args are the base specs (--bench/--vsync appended).
     static const char *labels[] = {
-        "Vulkan",            "OpenGL",         "D3D8: Cube",     "D3D9: Cube",
+        "Vulkan",            "OpenGL",         "DDraw: D3D7",    "DDraw: 2D Blit",
+        "D3D8: Cube",        "D3D9: Cube",     "D3D10: Cube",
         "D3D11: Cube",       "D3D11: Instanced", "D3D11: Tessellate", "D3D11: Compute",
         "D3D11: Dolphin",    "D3D12: Cube",
     };
     static const char *args[] = {
-        "vk", "gl", "dx8", "dx9", "dx11 --scene spin",
+        "vk", "gl", "dx7", "ddraw2d", "dx8", "dx9", "dx10", "dx11 --scene spin",
         "dx11 --scene instanced", "dx11 --scene tess", "dx11 --scene compute",
         "dx11 --scene dolphin", "dx12",
     };
     static const char *apilabels[] = {
-        "Vulkan",          "OpenGL",         "Direct3D 8",   "Direct3D 9",
+        "Vulkan",          "OpenGL",         "Direct3D 7 (DirectDraw)", "DirectDraw 2D",
+        "Direct3D 8",      "Direct3D 9",     "Direct3D 10",
         "D3D11 Cube",      "D3D11 Instanced", "D3D11 Tessellation", "D3D11 Compute Particles",
         "D3D11 Dolphin",   "Direct3D 12",
     };
@@ -354,6 +358,43 @@ static void show_dx11_scenes(HWND frame) {
         g_cbtn_avg[i] = NULL;
         g_cbtn[i] = CreateWindowA("BUTTON", labels[i], WS_CHILD | WS_VISIBLE | BS_PUSHBUTTON,
                                   cr.left, y, 240, 34, frame, (HMENU)(INT_PTR)(ID_CB_FIRST + i),
+                                  g_hinst, NULL);
+        if (g_ui_font) SendMessage(g_cbtn[i], WM_SETFONT, (WPARAM)g_ui_font, TRUE);
+        y += 44;
+    }
+}
+
+// DirectDraw picker: the legacy ddraw path DXVK does NOT implement (ddraw ->
+// wined3d -> GL). Two launch-only buttons: the Direct3D 7 immediate-mode cube
+// and a pure-2D DirectDraw blit test.
+static void show_ddraw_scenes(HWND frame) {
+    destroy_content();
+    g_cb_bench = 0;  // launch-only buttons
+    SetWindowTextA(g_header, "Cube - DirectDraw (legacy DX5/6/7)");
+    RECT cr;
+    get_content_rect(frame, &cr);
+
+    g_placeholder = CreateWindowA(
+        "STATIC",
+        "DirectDraw is the legacy DX5/6/7 path - DXVK does NOT handle it, so this\n"
+        "exercises Wine's ddraw -> wined3d -> OpenGL stack instead (the path old games\n"
+        "actually use). Each opens in a new window; press Esc to close it.",
+        WS_CHILD | WS_VISIBLE | SS_LEFT, cr.left, cr.top, cr.right - cr.left, 70, frame, NULL,
+        g_hinst, NULL);
+    if (g_ui_font) SendMessage(g_placeholder, WM_SETFONT, (WPARAM)g_ui_font, TRUE);
+
+    static const char *labels[] = {"Direct3D 7 cube (immediate mode)", "2D DirectDraw blit test"};
+    static const char *args[] = {"dx7", "ddraw2d"};
+    g_cbtn_n = (int)(sizeof(args) / sizeof(args[0]));
+    int y = cr.top + 84;
+    for (int i = 0; i < g_cbtn_n; i++) {
+        g_cbtn_arg[i] = args[i];
+        g_cbtn_label[i] = NULL;
+        g_cbtn_proc[i] = NULL;
+        g_cbtn_result[i] = NULL;
+        g_cbtn_avg[i] = NULL;
+        g_cbtn[i] = CreateWindowA("BUTTON", labels[i], WS_CHILD | WS_VISIBLE | BS_PUSHBUTTON,
+                                  cr.left, y, 260, 34, frame, (HMENU)(INT_PTR)(ID_CB_FIRST + i),
                                   g_hinst, NULL);
         if (g_ui_font) SendMessage(g_cbtn[i], WM_SETFONT, (WPARAM)g_ui_font, TRUE);
         y += 44;
@@ -522,6 +563,17 @@ static void on_select(HWND frame, int action) {
             if (h) CloseHandle(h);
             show_placeholder(frame, "Cube - OpenGL",
                              "Launched the OpenGL cube in a new window.\n\n"
+                             "The menu stays here - switch back any time, or launch another test.");
+            break;
+        }
+        case AIO_MODE_CUBE_DDRAW:
+            show_ddraw_scenes(frame);  // pick D3D7 cube or 2D blit
+            break;
+        case AIO_MODE_CUBE_DX10: {
+            HANDLE h = launch_cube_window("dx10");
+            if (h) CloseHandle(h);
+            show_placeholder(frame, "Cube - Direct3D 10",
+                             "Launched the Direct3D 10 cube in a new window (tests the DXVK d3d10 path).\n\n"
                              "The menu stays here - switch back any time, or launch another test.");
             break;
         }
@@ -755,7 +807,7 @@ int aio_run_shell(HINSTANCE hInstance) {
     wc.lpszClassName = cls;
     RegisterClassA(&wc);
 
-    int w = 840, h = 560;
+    int w = 840, h = 660;  // tall enough for the full benchmark list (13 rows)
     int sx = (GetSystemMetrics(SM_CXSCREEN) - w) / 2;
     int sy = (GetSystemMetrics(SM_CYSCREEN) - h) / 2;
     if (sx < 0) sx = 0;

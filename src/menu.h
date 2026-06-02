@@ -6,14 +6,16 @@
 #include <windows.h>
 
 // Current release version, shown in the bottom-right of the shell. Bump on release.
-#define AIO_VERSION "v1.2.0"
+#define AIO_VERSION "v1.3.0"
 
 enum AioMode {
     AIO_MODE_EXIT = 0,
     AIO_MODE_CUBE_VK,
     AIO_MODE_CUBE_GL,
+    AIO_MODE_CUBE_DDRAW,  // DirectDraw / legacy Direct3D (DX7 cube + 2D blit)
     AIO_MODE_CUBE_DX8,
     AIO_MODE_CUBE_DX9,
+    AIO_MODE_CUBE_DX10,
     AIO_MODE_CUBE_DX11,
     AIO_MODE_CUBE_DX12,
     AIO_MODE_GPUINFO,

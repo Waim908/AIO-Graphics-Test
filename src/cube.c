@@ -68,8 +68,10 @@
 #include "cube_gl.h"     // AIO Graphics Test: OpenGL cube backend
 #include "cube_d3d11.h"  // AIO Graphics Test: Direct3D 11 (DXVK) cube backend
 #include "cube_d3d12.h"  // AIO Graphics Test: Direct3D 12 (VKD3D) cube backend
+#include "cube_d3d10.h"  // AIO Graphics Test: Direct3D 10 (DXVK) cube backend
 #include "cube_d3d9.h"   // AIO Graphics Test: Direct3D 9 (DXVK) cube backend
 #include "cube_d3d8.h"   // AIO Graphics Test: Direct3D 8 (DXVK d3d8 wrapper) cube backend
+#include "cube_ddraw.h"  // AIO Graphics Test: DirectDraw / legacy Direct3D (DX5/6/7) backend
 #endif
 #define MILLION 1000000L
 #define BILLION 1000000000L
@@ -4308,6 +4310,22 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR pCmdLine,
             AIO_FREE_ARGV();
             return rc;
         }
+        if (strcmp(api, "dx10") == 0) {
+            int rc = aio_run_d3d10_cube(hInstance);
+            AIO_FREE_ARGV();
+            return rc;
+        }
+        // DirectDraw / legacy Direct3D: dx7 (or ddraw) = D3D7 cube, ddraw2d = 2D blit.
+        if (strcmp(api, "dx7") == 0 || strcmp(api, "ddraw") == 0) {
+            int rc = aio_run_ddraw_cube(hInstance, "dd7");
+            AIO_FREE_ARGV();
+            return rc;
+        }
+        if (strcmp(api, "ddraw2d") == 0 || strcmp(api, "dx2d") == 0) {
+            int rc = aio_run_ddraw_cube(hInstance, "dd2d");
+            AIO_FREE_ARGV();
+            return rc;
+        }
         if (strcmp(api, "dx9") == 0) {
             int rc = aio_run_d3d9_cube(hInstance);
             AIO_FREE_ARGV();
@@ -4321,7 +4339,8 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR pCmdLine,
         if (strcmp(api, "vk") != 0) {
             MessageBoxA(NULL,
                         "This graphics API backend is coming in a future version.\n\n"
-                        "Available now: Cube (Vulkan/OpenGL/Direct3D 9/11/12).",
+                        "Available now: Cube (Vulkan / OpenGL / DirectDraw-DX7 / DX8 / DX9 /\n"
+                        "DX10 / DX11 / DX12, plus a 2D DirectDraw blit test).",
                         "AIO Graphics Test", MB_OK | MB_ICONINFORMATION);
             AIO_FREE_ARGV();
             return 0;

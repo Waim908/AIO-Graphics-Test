@@ -33,17 +33,26 @@ with optional CLI shortcuts:
   in-frame, cube tests open in their own window (so the menu stays usable).
 - **GPU / driver report** — an in-frame tabbed **Vulkan / OpenGL** view (device, driver +
   API version, memory heaps, queue families, features, extensions). Replaces `GPUInfo.exe`.
-- **Multi-API renderer** — the same cube through **six** graphics APIs, all device-confirmed
-  on Adreno 750 / Turnip:
+- **Multi-API renderer** — the same cube through **every** graphics API in the Winlator
+  stack, so 5/6/7/8/9/10/11/12 are all covered:
 
   | Backend | Path it exercises |
   |---|---|
   | **Vulkan**     | native Vulkan → **Turnip** (no translation — the baseline) |
   | **OpenGL**     | OpenGL → **Zink / wined3d** → Vulkan |
+  | **DirectDraw (DX5/6/7)** | **Wine `ddraw`** → wined3d → OpenGL — the legacy path **DXVK does not implement**, a genuinely different stack from everything below. A Direct3D 7 immediate-mode cube + a pure-2D blit test. |
   | **Direct3D 8** | **DXVK** d3d8 → d3d9 → Vulkan |
   | **Direct3D 9** | **DXVK** d3d9 → Vulkan |
+  | **Direct3D 10**| **DXVK** d3d10 → d3d11 → Vulkan |
   | **Direct3D 11**| **DXVK** d3d11 → Vulkan |
   | **Direct3D 12**| **VKD3D-Proton** d3d12 → Vulkan |
+
+  > **Two builds, two bitnesses.** Each release ships `AIO-Graphics-Test.exe` (**64-bit**)
+  > and `AIO-Graphics-Test-x86.exe` (**32-bit**). A 64-bit process can only load the
+  > container's *x64* DXVK / VKD3D / ddraw DLLs; a 32-bit process loads the separate *x32*
+  > set. Since almost every legacy DirectX game (and all DX5/6/7 titles) runs as 32-bit, the
+  > x86 build tests DLLs the x64 build physically can't reach. Use whichever matches the game
+  > you're debugging — or run both to compare the two DLL sets.
 
 - **DX11 test suite** — Direct3D 11 is six scenes, each stressing a different part of DXVK:
 
@@ -83,7 +92,8 @@ The menu is the primary interface, but every mode has a flag too:
 |------|--------------|
 | *(default)* | Opens the app shell (menu) |
 | `--gpuinfo` / `--report` | Dump GL + VK adapter info to console + `AIO-Graphics-Test_report.txt`, then exit |
-| `--cube vk\|gl\|dx8\|dx9\|dx11\|dx12` | Launch a backend directly in its own window |
+| `--cube vk\|gl\|dx7\|dx8\|dx9\|dx10\|dx11\|dx12` | Launch a backend directly in its own window |
+| `--cube ddraw2d` | Launch the pure-2D DirectDraw blit test (`dx7` = the DirectDraw 3D cube) |
 | `--cube dx11 --scene spin\|textured\|instanced\|tess\|compute\|dolphin` | Pick a DX11 scene |
 | `--bench <sec>` | Run the launched cube as a timed benchmark (avg/min/max/1%-low + CSV) |
 | `--vsync` | Present with vsync (default is uncapped) |
@@ -93,11 +103,12 @@ The menu is the primary interface, but every mode has a flag too:
 
 ## Build
 
-CI only (no local builds). Cross-compiled Linux → Windows x86_64 PE on GitHub Actions
-(`.github/workflows/build-windows.yml`): mingw-w64 + Vulkan-Headers + a cross-built
-Vulkan-Loader import lib + glslang + `windres` (icon) → `AIO-Graphics-Test.exe`. Releases are
-the exact CI-built artifact. Only `vulkan-1` is statically imported (always present in a
-container); d3d8/9/11/12, dxgi, and d3dcompiler are loaded at runtime.
+CI only (no local builds). Cross-compiled Linux → Windows PE on GitHub Actions
+(`.github/workflows/build-windows.yml`) as a **two-arch matrix**: mingw-w64 + Vulkan-Headers
++ a cross-built Vulkan-Loader import lib + glslang + `windres` (icon) → `AIO-Graphics-Test.exe`
+(**x86_64**) and `AIO-Graphics-Test-x86.exe` (**i686**). Releases are the exact CI-built
+artifacts. Only `vulkan-1` is statically imported (always present in a container);
+`ddraw`/d3d8/9/10/11/12, `dxgi`, and `d3dcompiler` are loaded at runtime.
 
 ## Layout
 
@@ -105,8 +116,10 @@ container); d3d8/9/11/12, dxgi, and d3dcompiler are loaded at runtime.
 src/cube.c            forked vkcube + WinMain dispatch (also the Vulkan backend)
 src/menu.c            app shell: sidebar menu, GPU Info tabs, scene/benchmark/probe views
 src/cube_gl.c         OpenGL backend (WGL)
+src/cube_ddraw.c      DirectDraw / legacy Direct3D backend (DX7 cube + 2D blit)
 src/cube_d3d8.c       Direct3D 8 backend (DXVK d3d8 wrapper)
 src/cube_d3d9.c       Direct3D 9 backend (DXVK)
+src/cube_d3d10.c      Direct3D 10 backend (DXVK)
 src/cube_d3d11.c      Direct3D 11 scene framework + 6 scenes
 src/cube_d3d12.c      Direct3D 12 backend (VKD3D-Proton)
 src/gpuinfo.c         GL + VK adapter report
