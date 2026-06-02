@@ -1364,6 +1364,180 @@ static void ray_cleanup(void) {
     memset(&g_ray, 0, sizeof(g_ray));
 }
 
+// ========================= GEOMETRY-SHADER scene ===========================
+// A mesh exploder: the geometry shader receives each triangle, computes its face
+// normal, pushes the whole triangle outward along that normal by a time-varying
+// amount, flat-shades it (diffuse + specular from the face normal) and emits it.
+// This is the only scene that exercises the geometry-shader STAGE (DXVK implements
+// GS on top of Vulkan; on Turnip/Adreno it is emulated, so this doubles as a GS
+// capability + perf probe). Source mesh = a procedurally built UV-sphere triangle
+// list. CULL_NONE so exploded shards render from both sides.
+static const char *kGSHLSL =
+    "cbuffer CB : register(b0) { row_major float4x4 world; row_major float4x4 viewProj; float4 misc; };\n"
+    "struct VSOut { float3 wpos : TEXCOORD0; };\n"
+    "VSOut VSMain(float3 pos : POSITION) { VSOut o; o.wpos = mul(float4(pos,1.0), world).xyz; return o; }\n"
+    "struct GSOut { float4 pos : SV_POSITION; float3 col : COLOR; };\n"
+    "[maxvertexcount(3)]\n"
+    "void GSMain(triangle VSOut i[3], inout TriangleStream<GSOut> stream) {\n"
+    "  float3 n = normalize(cross(i[1].wpos - i[0].wpos, i[2].wpos - i[0].wpos));\n"
+    "  float3 L = normalize(float3(0.5,0.8,0.6));\n"
+    "  float3 base = 0.5 + 0.5*cos(float3(0.0,2.0,4.0) + misc.y*0.3);\n"
+    "  float dif = saturate(dot(n,L));\n"
+    "  [unroll] for (int k=0;k<3;k++){\n"
+    "    GSOut o; float3 wp = i[k].wpos + n*misc.x;\n"
+    "    o.pos = mul(float4(wp,1.0), viewProj);\n"
+    "    float3 V = normalize(float3(0.0,0.0,7.0) - wp); float3 H = normalize(L+V);\n"
+    "    float spec = pow(saturate(dot(n,H)), 40.0);\n"
+    "    o.col = base*(0.25 + dif) + spec*0.6; stream.Append(o);\n"
+    "  }\n"
+    "}\n"
+    "float4 PSMain(GSOut i) : SV_TARGET { return float4(i.col, 1.0); }\n";
+
+typedef struct {
+    float pos[3];
+} PosVtx;
+
+typedef struct {
+    float world[16];
+    float viewProj[16];
+    float misc[4];
+} GSCB;
+
+static struct {
+    ID3D11VertexShader *vs;
+    ID3D11GeometryShader *gs;
+    ID3D11PixelShader *ps;
+    ID3D11InputLayout *layout;
+    ID3D11Buffer *vbo, *cbo;
+    ID3D11RasterizerState *rs;
+    int vcount;
+} g_gs;
+
+static int gs_init(ID3D11Device *dev, ID3D11DeviceContext *ctx, int w, int h) {
+    (void)ctx;
+    (void)w;
+    (void)h;
+    ID3DBlob *vsb = compile_hlsl(kGSHLSL, "VSMain", "vs_4_0");
+    ID3DBlob *gsb = compile_hlsl(kGSHLSL, "GSMain", "gs_4_0");
+    ID3DBlob *psb = compile_hlsl(kGSHLSL, "PSMain", "ps_4_0");
+    if (!vsb || !gsb || !psb) return 1;
+    ID3D11Device_CreateVertexShader(dev, ID3D10Blob_GetBufferPointer(vsb),
+                                    ID3D10Blob_GetBufferSize(vsb), NULL, &g_gs.vs);
+    HRESULT hg = ID3D11Device_CreateGeometryShader(dev, ID3D10Blob_GetBufferPointer(gsb),
+                                                   ID3D10Blob_GetBufferSize(gsb), NULL, &g_gs.gs);
+    ID3D11Device_CreatePixelShader(dev, ID3D10Blob_GetBufferPointer(psb),
+                                   ID3D10Blob_GetBufferSize(psb), NULL, &g_gs.ps);
+    D3D11_INPUT_ELEMENT_DESC il[] = {
+        {"POSITION", 0, DXGI_FORMAT_R32G32B32_FLOAT, 0, 0, D3D11_INPUT_PER_VERTEX_DATA, 0},
+    };
+    ID3D11Device_CreateInputLayout(dev, il, 1, ID3D10Blob_GetBufferPointer(vsb),
+                                   ID3D10Blob_GetBufferSize(vsb), &g_gs.layout);
+    ID3D10Blob_Release(vsb);
+    ID3D10Blob_Release(gsb);
+    ID3D10Blob_Release(psb);
+    if (FAILED(hg) || !g_gs.gs) {
+        fail_box("Geometry shaders (gs_4_0) are not available on this Direct3D 11 device.");
+        return 1;
+    }
+
+    // Build a UV-sphere triangle list (positions only; the GS derives face normals).
+    const int rings = 16, sectors = 32;
+    const int vc = rings * sectors * 6;
+    PosVtx *verts = (PosVtx *)malloc((size_t)vc * sizeof(PosVtx));
+    if (!verts) return 1;
+    int n = 0;
+    for (int ri = 0; ri < rings; ri++) {
+        float t0 = (float)ri / rings * 3.14159265f;
+        float t1 = (float)(ri + 1) / rings * 3.14159265f;
+        for (int si = 0; si < sectors; si++) {
+            float p0 = (float)si / sectors * 6.2831853f;
+            float p1 = (float)(si + 1) / sectors * 6.2831853f;
+#define AIO_SP(th, ph, dst) \
+    do { (dst)[0] = sinf(th) * cosf(ph); (dst)[1] = cosf(th); (dst)[2] = sinf(th) * sinf(ph); } while (0)
+            float a[3], b[3], c[3], d[3];
+            AIO_SP(t0, p0, a);
+            AIO_SP(t1, p0, b);
+            AIO_SP(t1, p1, c);
+            AIO_SP(t0, p1, d);
+#undef AIO_SP
+            memcpy(verts[n++].pos, a, 12);
+            memcpy(verts[n++].pos, b, 12);
+            memcpy(verts[n++].pos, c, 12);
+            memcpy(verts[n++].pos, a, 12);
+            memcpy(verts[n++].pos, c, 12);
+            memcpy(verts[n++].pos, d, 12);
+        }
+    }
+    g_gs.vcount = n;
+    D3D11_BUFFER_DESC vbd;
+    memset(&vbd, 0, sizeof(vbd));
+    vbd.ByteWidth = (UINT)(n * sizeof(PosVtx));
+    vbd.Usage = D3D11_USAGE_IMMUTABLE;
+    vbd.BindFlags = D3D11_BIND_VERTEX_BUFFER;
+    D3D11_SUBRESOURCE_DATA sr;
+    memset(&sr, 0, sizeof(sr));
+    sr.pSysMem = verts;
+    ID3D11Device_CreateBuffer(dev, &vbd, &sr, &g_gs.vbo);
+    free(verts);
+
+    D3D11_BUFFER_DESC cbd;
+    memset(&cbd, 0, sizeof(cbd));
+    cbd.ByteWidth = sizeof(GSCB);
+    cbd.Usage = D3D11_USAGE_DYNAMIC;
+    cbd.BindFlags = D3D11_BIND_CONSTANT_BUFFER;
+    cbd.CPUAccessFlags = D3D11_CPU_ACCESS_WRITE;
+    ID3D11Device_CreateBuffer(dev, &cbd, NULL, &g_gs.cbo);
+
+    D3D11_RASTERIZER_DESC rd;
+    memset(&rd, 0, sizeof(rd));
+    rd.FillMode = D3D11_FILL_SOLID;
+    rd.CullMode = D3D11_CULL_NONE;  // shards seen from behind must still render
+    rd.DepthClipEnable = TRUE;
+    ID3D11Device_CreateRasterizerState(dev, &rd, &g_gs.rs);
+    return (g_gs.vs && g_gs.gs && g_gs.ps && g_gs.layout && g_gs.vbo && g_gs.cbo && g_gs.rs) ? 0 : 1;
+}
+
+static void gs_frame(ID3D11DeviceContext *ctx, double t, float aspect) {
+    Mat4 world = mat_rotate(0.3f, 1.0f, 0.2f, (float)t * 0.6f);
+    Mat4 viewProj = mat_mul(mat_translate(0.0f, 0.0f, -7.0f),
+                            mat_perspective(0.6f, aspect, 0.1f, 100.0f));
+    float explode = (sinf((float)t * 1.2f) * 0.5f + 0.5f) * 1.8f;
+    D3D11_MAPPED_SUBRESOURCE m;
+    if (SUCCEEDED(ID3D11DeviceContext_Map(ctx, (ID3D11Resource *)g_gs.cbo, 0,
+                                          D3D11_MAP_WRITE_DISCARD, 0, &m))) {
+        GSCB *cb = (GSCB *)m.pData;
+        memcpy(cb->world, world.m, sizeof(world.m));
+        memcpy(cb->viewProj, viewProj.m, sizeof(viewProj.m));
+        cb->misc[0] = explode;
+        cb->misc[1] = (float)t;
+        cb->misc[2] = cb->misc[3] = 0.0f;
+        ID3D11DeviceContext_Unmap(ctx, (ID3D11Resource *)g_gs.cbo, 0);
+    }
+    UINT stride = sizeof(PosVtx), offset = 0;
+    ID3D11DeviceContext_RSSetState(ctx, g_gs.rs);
+    ID3D11DeviceContext_IASetInputLayout(ctx, g_gs.layout);
+    ID3D11DeviceContext_IASetPrimitiveTopology(ctx, D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
+    ID3D11DeviceContext_IASetVertexBuffers(ctx, 0, 1, &g_gs.vbo, &stride, &offset);
+    ID3D11DeviceContext_VSSetShader(ctx, g_gs.vs, NULL, 0);
+    ID3D11DeviceContext_VSSetConstantBuffers(ctx, 0, 1, &g_gs.cbo);
+    ID3D11DeviceContext_GSSetShader(ctx, g_gs.gs, NULL, 0);
+    ID3D11DeviceContext_GSSetConstantBuffers(ctx, 0, 1, &g_gs.cbo);
+    ID3D11DeviceContext_PSSetShader(ctx, g_gs.ps, NULL, 0);
+    ID3D11DeviceContext_Draw(ctx, (UINT)g_gs.vcount, 0);
+    ID3D11DeviceContext_GSSetShader(ctx, NULL, NULL, 0);  // unbind GS after the draw
+}
+
+static void gs_cleanup(void) {
+    if (g_gs.rs) ID3D11RasterizerState_Release(g_gs.rs);
+    if (g_gs.cbo) ID3D11Buffer_Release(g_gs.cbo);
+    if (g_gs.vbo) ID3D11Buffer_Release(g_gs.vbo);
+    if (g_gs.layout) ID3D11InputLayout_Release(g_gs.layout);
+    if (g_gs.ps) ID3D11PixelShader_Release(g_gs.ps);
+    if (g_gs.gs) ID3D11GeometryShader_Release(g_gs.gs);
+    if (g_gs.vs) ID3D11VertexShader_Release(g_gs.vs);
+    memset(&g_gs, 0, sizeof(g_gs));
+}
+
 // ============================== scene registry ==============================
 static const D3D11Scene kScenes[] = {
     {"spin", "D3D11 Cube", spin_init, spin_frame, spin_cleanup},
@@ -1373,6 +1547,7 @@ static const D3D11Scene kScenes[] = {
     {"compute", "D3D11 Compute Particles", comp_init, comp_frame, comp_cleanup},
     {"dolphin", "D3D11 Dolphin", dol_init, dol_frame, dol_cleanup},
     {"raymarch", "D3D11 Raymarch SDF", ray_init, ray_frame, ray_cleanup},
+    {"gsexplode", "D3D11 GS Exploder", gs_init, gs_frame, gs_cleanup},
 };
 
 static const D3D11Scene *pick_scene(const char *name) {

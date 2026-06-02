@@ -289,18 +289,18 @@ static void show_benchmark(HWND frame) {
         "Vulkan",            "OpenGL",         "DDraw: D3D7",    "DDraw: 2D Blit",
         "D3D8: Cube",        "D3D9: Cube",     "D3D10: Cube",
         "D3D11: Cube",       "D3D11: Instanced", "D3D11: Tessellate", "D3D11: Compute",
-        "D3D11: Dolphin",    "D3D11: Raymarch", "D3D12: Cube",
+        "D3D11: Dolphin",    "D3D11: Raymarch", "D3D11: GS Explode", "D3D12: Cube",
     };
     static const char *args[] = {
         "vk", "gl", "dx7", "ddraw2d", "dx8", "dx9", "dx10", "dx11 --scene spin",
         "dx11 --scene instanced", "dx11 --scene tess", "dx11 --scene compute",
-        "dx11 --scene dolphin", "dx11 --scene raymarch", "dx12",
+        "dx11 --scene dolphin", "dx11 --scene raymarch", "dx11 --scene gsexplode", "dx12",
     };
     static const char *apilabels[] = {
         "Vulkan",          "OpenGL",         "Direct3D 7 (DirectDraw)", "DirectDraw 2D",
         "Direct3D 8",      "Direct3D 9",     "Direct3D 10",
         "D3D11 Cube",      "D3D11 Instanced", "D3D11 Tessellation", "D3D11 Compute Particles",
-        "D3D11 Dolphin",   "D3D11 Raymarch SDF", "Direct3D 12",
+        "D3D11 Dolphin",   "D3D11 Raymarch SDF", "D3D11 GS Exploder", "Direct3D 12",
     };
     g_cbtn_n = (int)(sizeof(args) / sizeof(args[0]));
     int y = cr.top + 86;
@@ -345,11 +345,11 @@ static void show_dx11_scenes(HWND frame) {
     static const char *labels[] = {"Spinning cube",        "Textured cube",
                                    "Instanced (512 cubes)", "Tessellation (sphere)",
                                    "Compute particles",     "Dolphin (swim)",
-                                   "Raymarch SDF (shader)"};
+                                   "Raymarch SDF (shader)", "GS mesh exploder"};
     static const char *args[] = {"dx11 --scene spin",      "dx11 --scene textured",
                                  "dx11 --scene instanced", "dx11 --scene tess",
                                  "dx11 --scene compute",   "dx11 --scene dolphin",
-                                 "dx11 --scene raymarch"};
+                                 "dx11 --scene raymarch",  "dx11 --scene gsexplode"};
     g_cbtn_n = (int)(sizeof(args) / sizeof(args[0]));
     int y = cr.top + 70;
     for (int i = 0; i < g_cbtn_n; i++) {
@@ -809,7 +809,7 @@ int aio_run_shell(HINSTANCE hInstance) {
     wc.lpszClassName = cls;
     RegisterClassA(&wc);
 
-    int w = 840, h = 660;  // tall enough for the full benchmark list (13 rows)
+    int w = 840, h = 730;  // tall enough for the full benchmark list (15 rows)
     int sx = (GetSystemMetrics(SM_CXSCREEN) - w) / 2;
     int sy = (GetSystemMetrics(SM_CYSCREEN) - h) / 2;
     if (sx < 0) sx = 0;
