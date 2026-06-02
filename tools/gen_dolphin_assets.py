@@ -6,7 +6,7 @@
 #   python3 tools/gen_dolphin_assets.py <assets_dir> src/dolphin_assets.h
 #
 # Note: embeds Microsoft DirectX SDK sample data; see scene notes re: licensing.
-import re, sys, struct
+import re, sys, struct, math
 
 NUM = re.compile(r'-?\d+\.?\d*(?:[eE][-+]?\d+)?')
 
@@ -148,12 +148,26 @@ def main():
     v2, _, n2, _ = load_x(f"{d}/Dolphin2.x")
     v3, _, n3, _ = load_x(f"{d}/Dolphin3.x")
     sv, stris, sn, suv = load_x(f"{d}/seafloor.x")
-    # Dolphin has no texcoords in the .x; synthesize planar UVs from the base pose
-    # so the skin's dorsal gradient runs top (back) -> bottom (belly).
+    # Dolphin has no texcoords in the .x; synthesize a CYLINDRICAL unwrap around
+    # the body's long (nose->tail) axis = X (verified: X range >> Y,Z). This wraps
+    # the skin around the rounded body instead of projecting it flat onto the side
+    # silhouette, removing the front/back duplication and the back/belly smearing
+    # the old planar projection produced.
+    #   U = position along the body length (nose -> tail)
+    #   V = angle around the body in the Y-Z cross-section, folded so dorsal(+Y)->0
+    #       and belly(-Y)->1. abs() mirrors the left/right flanks (a dolphin skin is
+    #       bilaterally symmetric) and puts the only fold on the belly midline, where
+    #       both +pi and -pi map to V=1, so there is no visible seam.
     if not uv:
-        xs = [p[0] for p in v1]; ys = [p[1] for p in v1]
-        x0, x1 = min(xs), max(xs); y0, y1 = min(ys), max(ys)
-        uv = [((p[0]-x0)/(x1-x0+1e-6), 1.0-(p[1]-y0)/(y1-y0+1e-6)) for p in v1]
+        xs = [p[0] for p in v1]; ys = [p[1] for p in v1]; zs = [p[2] for p in v1]
+        x0, x1 = min(xs), max(xs)
+        yc = (min(ys) + max(ys)) / 2.0
+        zc = (min(zs) + max(zs)) / 2.0
+        uv = []
+        for p in v1:
+            u = (p[0] - x0) / (x1 - x0 + 1e-6)
+            ang = math.atan2(p[2] - zc, p[1] - yc)   # 0 at dorsal (+Y), +-pi at belly
+            uv.append((u, abs(ang) / math.pi))
     print(f"dolphin: {len(v1)} verts, {len(tris)} tris, normals={len(n1) if n1 else 0}, uv={len(uv) if uv else 0}")
     print(f"keyframes match: {len(v1)==len(v2)==len(v3)}")
     print(f"seafloor: {len(sv)} verts, {len(stris)} tris, normals={len(sn) if sn else 0}, uv={len(suv) if suv else 0}")
