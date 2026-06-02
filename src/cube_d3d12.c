@@ -432,7 +432,10 @@ int aio_run_d3d12_cube(HINSTANCE hinst) {
     vbv.SizeInBytes = sizeof(verts);
     vbv.StrideInBytes = sizeof(Vertex);
 
-    // Constant buffer (upload heap, persistently mapped; 256-byte aligned).
+    // Constant buffer: one 256-byte slot per frame-in-flight, persistently mapped.
+    // Separate slots so the CPU can write the next frame's MVP while the GPU is
+    // still reading the previous frame's (required once the loop is pipelined).
+    const SIZE_T CB_STRIDE = 256;
     ID3D12Resource *cbo = NULL;
     void *cbptr = NULL;
     {
@@ -440,7 +443,7 @@ int aio_run_d3d12_cube(HINSTANCE hinst) {
         D3D12_RESOURCE_DESC rd;
         memset(&rd, 0, sizeof(rd));
         rd.Dimension = D3D12_RESOURCE_DIMENSION_BUFFER;
-        rd.Width = 256;
+        rd.Width = CB_STRIDE * FRAME_COUNT;
         rd.Height = 1;
         rd.DepthOrArraySize = 1;
         rd.MipLevels = 1;
@@ -453,11 +456,14 @@ int aio_run_d3d12_cube(HINSTANCE hinst) {
         ID3D12Resource_Map(cbo, 0, &rr, &cbptr);
     }
 
-    ID3D12CommandAllocator *alloc = NULL;
+    // One command allocator per frame-in-flight so we can record the next frame
+    // while the GPU is still executing the previous one's allocator.
+    ID3D12CommandAllocator *alloc[FRAME_COUNT] = {0};
+    for (UINT i = 0; i < FRAME_COUNT; i++)
+        ID3D12Device_CreateCommandAllocator(dev, D3D12_COMMAND_LIST_TYPE_DIRECT,
+                                            &IID_ID3D12CommandAllocator, (void **)&alloc[i]);
     ID3D12GraphicsCommandList *cl = NULL;
-    ID3D12Device_CreateCommandAllocator(dev, D3D12_COMMAND_LIST_TYPE_DIRECT,
-                                        &IID_ID3D12CommandAllocator, (void **)&alloc);
-    ID3D12Device_CreateCommandList(dev, 0, D3D12_COMMAND_LIST_TYPE_DIRECT, alloc, NULL,
+    ID3D12Device_CreateCommandList(dev, 0, D3D12_COMMAND_LIST_TYPE_DIRECT, alloc[0], NULL,
                                    &IID_ID3D12GraphicsCommandList, (void **)&cl);
     ID3D12GraphicsCommandList_Close(cl);
 
@@ -465,6 +471,9 @@ int aio_run_d3d12_cube(HINSTANCE hinst) {
     UINT64 fenceVal = 0;
     ID3D12Device_CreateFence(dev, 0, D3D12_FENCE_FLAG_NONE, &IID_ID3D12Fence, (void **)&fence);
     HANDLE fenceEvent = CreateEventA(NULL, FALSE, FALSE, NULL);
+    // Fence value that retires each frame slot; 0 = slot never used yet.
+    UINT64 frameFence[FRAME_COUNT] = {0};
+    UINT cpuFrame = 0;  // rotating CPU slot 0..FRAME_COUNT-1 (allocator + CB + fence)
 
     D3D12_VIEWPORT vp = {0.0f, 0.0f, (float)g_w, (float)g_h, 0.0f, 1.0f};
     D3D12_RECT scissor = {0, 0, g_w, g_h};
@@ -492,6 +501,15 @@ int aio_run_d3d12_cube(HINSTANCE hinst) {
         }
         if (g_quit) break;
 
+        // Throttle the CPU to FRAME_COUNT frames ahead: wait only for the slot
+        // we are about to reuse (allocator + CB), not the frame just submitted.
+        // This is what lets CPU recording overlap GPU execution (real pipelining).
+        if (frameFence[cpuFrame] != 0 &&
+            ID3D12Fence_GetCompletedValue(fence) < frameFence[cpuFrame]) {
+            ID3D12Fence_SetEventOnCompletion(fence, frameFence[cpuFrame], fenceEvent);
+            WaitForSingleObject(fenceEvent, INFINITE);
+        }
+
         LARGE_INTEGER now;
         QueryPerformanceCounter(&now);
         double t = (double)(now.QuadPart - start.QuadPart) / (double)qpf.QuadPart;
@@ -499,14 +517,15 @@ int aio_run_d3d12_cube(HINSTANCE hinst) {
         Mat4 model = mat_mul(mat_rotate(0, 1, 0, a), mat_rotate(1, 0, 0, 0.5f));
         Mat4 mvp = mat_mul(mat_mul(model, mat_translate(0, 0, -6.5f)),
                            mat_perspective(0.6f, (g_h > 0) ? (float)g_w / g_h : 1.0f, 0.1f, 100.0f));
-        memcpy(cbptr, mvp.m, sizeof(mvp.m));
+        SIZE_T cbOff = (SIZE_T)cpuFrame * CB_STRIDE;
+        memcpy((char *)cbptr + cbOff, mvp.m, sizeof(mvp.m));
 
         UINT idx = IDXGISwapChain3_GetCurrentBackBufferIndex(swap);
-        ID3D12CommandAllocator_Reset(alloc);
-        ID3D12GraphicsCommandList_Reset(cl, alloc, pso);
+        ID3D12CommandAllocator_Reset(alloc[cpuFrame]);
+        ID3D12GraphicsCommandList_Reset(cl, alloc[cpuFrame], pso);
         ID3D12GraphicsCommandList_SetGraphicsRootSignature(cl, rootsig);
         ID3D12GraphicsCommandList_SetGraphicsRootConstantBufferView(
-            cl, 0, ID3D12Resource_GetGPUVirtualAddress(cbo));
+            cl, 0, ID3D12Resource_GetGPUVirtualAddress(cbo) + cbOff);
         ID3D12GraphicsCommandList_RSSetViewports(cl, 1, &vp);
         ID3D12GraphicsCommandList_RSSetScissorRects(cl, 1, &scissor);
         barrier(cl, rt[idx], D3D12_RESOURCE_STATE_PRESENT, D3D12_RESOURCE_STATE_RENDER_TARGET);
@@ -527,13 +546,13 @@ int aio_run_d3d12_cube(HINSTANCE hinst) {
         ID3D12CommandQueue_ExecuteCommandLists(queue, 1, lists);
         IDXGISwapChain3_Present(swap, aio_vsync ? 1 : 0, 0);
 
-        // Wait for the GPU to finish this frame (simple, not pipelined).
+        // Tag this slot with the fence value that will retire it, then advance.
+        // We do NOT block here — the GPU runs this frame while the CPU records
+        // the next one; the throttle at the top of the loop enforces the depth.
         fenceVal++;
         ID3D12CommandQueue_Signal(queue, fence, fenceVal);
-        if (ID3D12Fence_GetCompletedValue(fence) < fenceVal) {
-            ID3D12Fence_SetEventOnCompletion(fence, fenceVal, fenceEvent);
-            WaitForSingleObject(fenceEvent, INFINITE);
-        }
+        frameFence[cpuFrame] = fenceVal;
+        cpuFrame = (cpuFrame + 1) % FRAME_COUNT;
         frames++;
 
         if (bench_on) {
@@ -581,7 +600,8 @@ int aio_run_d3d12_cube(HINSTANCE hinst) {
     if (fenceEvent) CloseHandle(fenceEvent);
     if (fence) ID3D12Fence_Release(fence);
     if (cl) ID3D12GraphicsCommandList_Release(cl);
-    if (alloc) ID3D12CommandAllocator_Release(alloc);
+    for (UINT i = 0; i < FRAME_COUNT; i++)
+        if (alloc[i]) ID3D12CommandAllocator_Release(alloc[i]);
     if (cbo) ID3D12Resource_Release(cbo);
     if (vbo) ID3D12Resource_Release(vbo);
     if (pso) ID3D12PipelineState_Release(pso);
