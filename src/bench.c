@@ -44,7 +44,8 @@ static size_t g_n;     // sample count
 static size_t g_cap;   // capacity
 static int g_seconds;  // requested duration
 static int g_active;
-static int g_warmup;   // first frames to discard (pipeline/swapchain warm-up)
+static double g_warmup_ms;   // discard frames until this much run time has elapsed
+static double g_elapsed_ms;  // wall time of all frames so far (incl. discarded warm-up)
 static char g_label_override[64];  // if set, overrides the result label (probe modes)
 int aio_vsync = 0;                 // shared vsync flag (set from --vsync)
 
@@ -59,14 +60,19 @@ void aio_bench_set_label(const char *label) {
 // frames (a windowed Present alone costs more than this), so they're dropped to
 // keep Max FPS meaningful. 0.02 ms == 50000 FPS, well above any real result.
 #define AIO_BENCH_MIN_FT_MS 0.02
-#define AIO_BENCH_WARMUP_FRAMES 3
+// Warm-up window (ms): frames in the first slice of the run are excluded from
+// the stats. Time-based, not a frame count, because driver-side pipeline/shader
+// compilation (notably VKD3D on first D3D12 draw) can stall a frame several
+// frames in - a fixed count let that ~1 s spike pollute Min FPS.
+#define AIO_BENCH_WARMUP_MS 500.0
 
 void aio_bench_begin(int seconds) {
     g_seconds = seconds;
     g_active = 1;
     g_n = 0;
     g_cap = 4096;
-    g_warmup = AIO_BENCH_WARMUP_FRAMES;
+    g_warmup_ms = AIO_BENCH_WARMUP_MS;
+    g_elapsed_ms = 0.0;
     g_ft = (double *)malloc(g_cap * sizeof(double));
 }
 
@@ -75,10 +81,14 @@ int aio_bench_seconds(void) { return g_seconds; }
 
 void aio_bench_add(double frame_ms) {
     if (!g_active || !g_ft || frame_ms <= 0.0) return;
-    if (g_warmup > 0) {  // discard warm-up frames (huge or near-zero first frames)
-        g_warmup--;
+    // Drop every frame that starts inside the warm-up window. Testing elapsed
+    // time *before* adding this frame means a single huge stall frame within the
+    // window (e.g. a first-use shader compile) is itself excluded.
+    if (g_elapsed_ms < g_warmup_ms) {
+        g_elapsed_ms += frame_ms;
         return;
     }
+    g_elapsed_ms += frame_ms;
     if (frame_ms < AIO_BENCH_MIN_FT_MS) return;  // drop impossible sub-frame outliers
     if (g_n >= g_cap) {
         size_t nc = g_cap * 2;
@@ -115,7 +125,10 @@ char *aio_bench_finish(const char *api_label, double total_seconds) {
         if (v > maxft) maxft = v;
     }
 
-    double avg_fps = (total_seconds > 0.0) ? (double)g_n / total_seconds : (1000.0 * (double)g_n / sum);
+    // Average over the measured (post-warm-up) frames: total kept frames / total
+    // kept frame time. Using the kept-frame sum rather than the full wall-clock
+    // duration keeps the average unbiased when warm-up frames are trimmed.
+    double avg_fps = (sum > 0.0) ? (1000.0 * (double)g_n / sum) : 0.0;
     double max_fps = (minft > 0.0) ? 1000.0 / minft : 0.0;
     double min_fps = (maxft > 0.0) ? 1000.0 / maxft : 0.0;
 
